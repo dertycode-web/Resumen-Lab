@@ -87,52 +87,52 @@
   html[data-theme="dark"] input[type="datetime-local"]::-webkit-calendar-picker-indicator { filter: invert(0.8); }
 </style>
 </head>
-<body style="margin:0;padding:28px 16px 40px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Arial,sans-serif;background:linear-gradient(180deg,var(--bg-top) 0%,var(--bg-bottom) 220px);color:var(--text-primary);">
+<body style="margin:0;padding:36px 24px 48px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Arial,sans-serif;background:linear-gradient(180deg,var(--bg-top) 0%,var(--bg-bottom) 220px);color:var(--text-primary);font-size:16px;">
 
-<div style="max-width:760px;margin:0 auto;">
+<div style="max-width:1040px;margin:0 auto;">
 
-  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:18px;">
-    <div style="display:flex;align-items:center;gap:12px;">
-      <div style="width:40px;height:40px;border-radius:11px;background:linear-gradient(135deg,#6a5cf5,#8f7ffb);display:flex;align-items:center;justify-content:center;font-size:18px;box-shadow:0 3px 10px rgba(106,92,245,0.28);flex-shrink:0;">🧪</div>
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:24px;">
+    <div style="display:flex;align-items:center;gap:16px;">
+      <div style="width:52px;height:52px;border-radius:14px;background:linear-gradient(135deg,#6a5cf5,#8f7ffb);display:flex;align-items:center;justify-content:center;font-size:24px;box-shadow:0 3px 10px rgba(106,92,245,0.28);flex-shrink:0;">🧪</div>
       <div>
-        <h1 style="font-size:21px;font-weight:600;margin:0;letter-spacing:-0.2px;color:var(--text-title);">Resumen LAB</h1>
-        <div id="rangeLine" style="font-size:12.5px;color:var(--text-secondary);margin-top:2px;"></div>
-        <div id="rangeLineEscIT" style="display:none;font-size:12.5px;color:var(--text-secondary);margin-top:2px;"></div>
+        <h1 style="font-size:28px;font-weight:600;margin:0;letter-spacing:-0.2px;color:var(--text-title);">Resumen LAB</h1>
+        <div id="rangeLine" style="font-size:15px;color:var(--text-secondary);margin-top:4px;"></div>
+        <div id="rangeLineEscIT" style="display:none;font-size:15px;color:var(--text-secondary);margin-top:4px;"></div>
       </div>
     </div>
-    <div id="rangeControls" style="display:flex;align-items:center;gap:8px;">
-      <button id="themeToggle" title="Cambiar tema" style="width:36px;height:36px;border-radius:9px;border:1px solid var(--toggle-border);background:var(--toggle-bg);cursor:pointer;font-size:15px;display:flex;align-items:center;justify-content:center;box-shadow:var(--shadow-soft);flex-shrink:0;">🌙</button>
-      <select id="rangePreset" style="height:36px;border:1px solid var(--input-border);border-radius:9px;padding:0 10px;font-size:12.5px;background:var(--input-bg);color:var(--input-text);box-shadow:var(--shadow-soft);cursor:pointer;"></select>
+    <div id="rangeControls" style="display:flex;align-items:center;gap:10px;">
+      <button id="themeToggle" title="Cambiar tema" style="width:46px;height:46px;border-radius:11px;border:1px solid var(--toggle-border);background:var(--toggle-bg);cursor:pointer;font-size:19px;display:flex;align-items:center;justify-content:center;box-shadow:var(--shadow-soft);flex-shrink:0;">🌙</button>
+      <select id="rangePreset" style="height:44px;border:1px solid var(--input-border);border-radius:10px;padding:0 14px;font-size:14.5px;background:var(--input-bg);color:var(--input-text);box-shadow:var(--shadow-soft);cursor:pointer;"></select>
     </div>
   </div>
 
-  <div id="rangePanel" style="border:1px solid var(--panel-border);border-radius:14px;padding:14px 16px;margin-bottom:20px;background:var(--panel-bg);box-shadow:var(--shadow-soft);">
-    <div style="font-size:12.5px;font-weight:600;margin-bottom:10px;color:var(--text-title);display:flex;align-items:center;gap:6px;">
-      <span style="font-size:13px;">🗓️</span> Pedir resumen de un rango puntual
+  <div id="rangePanel" style="border:1px solid var(--panel-border);border-radius:16px;padding:18px 22px;margin-bottom:26px;background:var(--panel-bg);box-shadow:var(--shadow-soft);">
+    <div style="font-size:14.5px;font-weight:600;margin-bottom:13px;color:var(--text-title);display:flex;align-items:center;gap:7px;">
+      <span style="font-size:15px;">🗓️</span> Pedir resumen de un rango puntual
     </div>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
-      <label style="display:flex;flex-direction:column;gap:3px;font-size:11px;color:var(--label-color);font-weight:500;">
+    <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;">
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--label-color);font-weight:500;">
         Desde
-        <input type="datetime-local" id="customFrom" style="height:33px;border:1px solid var(--input-border);border-radius:7px;padding:0 8px;font-size:12px;color:var(--input-text);background:var(--input-bg);">
+        <input type="datetime-local" id="customFrom" style="height:40px;border:1px solid var(--input-border);border-radius:8px;padding:0 10px;font-size:14px;color:var(--input-text);background:var(--input-bg);">
       </label>
-      <label style="display:flex;flex-direction:column;gap:3px;font-size:11px;color:var(--label-color);font-weight:500;">
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--label-color);font-weight:500;">
         Hasta
-        <input type="datetime-local" id="customTo" style="height:33px;border:1px solid var(--input-border);border-radius:7px;padding:0 8px;font-size:12px;color:var(--input-text);background:var(--input-bg);">
+        <input type="datetime-local" id="customTo" style="height:40px;border:1px solid var(--input-border);border-radius:8px;padding:0 10px;font-size:14px;color:var(--input-text);background:var(--input-bg);">
       </label>
-      <button id="customBtn" style="height:33px;border:1px solid var(--accent-border);border-radius:7px;padding:0 14px;font-size:12.5px;font-weight:600;background:var(--input-bg);color:var(--accent);cursor:pointer;">Generar resumen ↗</button>
+      <button id="customBtn" style="height:40px;border:1px solid var(--accent-border);border-radius:8px;padding:0 18px;font-size:14.5px;font-weight:600;background:var(--input-bg);color:var(--accent);cursor:pointer;">Generar resumen ↗</button>
     </div>
-    <div id="customMsg" style="font-size:11px;color:var(--text-muted);margin-top:7px;"></div>
+    <div id="customMsg" style="font-size:13px;color:var(--text-muted);margin-top:9px;"></div>
   </div>
 
-  <div id="tabBar" style="display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid var(--panel-border);">
-    <button class="rl-tab" data-tab="resumen" style="border:none;background:none;padding:8px 4px;margin-right:10px;font-size:13px;font-weight:600;cursor:pointer;color:var(--text-secondary);border-bottom:2px solid transparent;">Resumen</button>
-    <button class="rl-tab" data-tab="escalamientosIT" style="border:none;background:none;padding:8px 4px;margin-right:10px;font-size:13px;font-weight:600;cursor:pointer;color:var(--text-secondary);border-bottom:2px solid transparent;">Escalamientos IT</button>
+  <div id="tabBar" style="display:flex;gap:8px;margin-bottom:18px;border-bottom:1px solid var(--panel-border);">
+    <button class="rl-tab" data-tab="resumen" style="border:none;background:none;padding:10px 6px;margin-right:14px;font-size:15.5px;font-weight:600;cursor:pointer;color:var(--text-secondary);border-bottom:3px solid transparent;">Resumen</button>
+    <button class="rl-tab" data-tab="escalamientosIT" style="border:none;background:none;padding:10px 6px;margin-right:14px;font-size:15.5px;font-weight:600;cursor:pointer;color:var(--text-secondary);border-bottom:3px solid transparent;">Escalamientos IT</button>
   </div>
 
-  <div id="cards" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"></div>
-  <div id="cardsEscIT" style="display:none;grid-template-columns:1fr 1fr;gap:12px;"></div>
+  <div id="cards" style="display:grid;grid-template-columns:1fr 1fr;gap:18px;"></div>
+  <div id="cardsEscIT" style="display:none;grid-template-columns:1fr 1fr;gap:18px;"></div>
 
-  <p style="font-size:11.5px;color:var(--text-muted);margin-top:24px;text-align:center;line-height:1.5;">
+  <p style="font-size:13px;color:var(--text-muted);margin-top:30px;text-align:center;line-height:1.6;">
     Se relee la bandeja cada 5 minutos y cada mail queda guardado con su fecha real.<br>
     Fuente: mails reenviados desde lautaro.rojas@claro.com.ar a esta casilla de Gmail.
   </p>
@@ -382,27 +382,27 @@
 
       var card = document.createElement("div");
       card.className = "rl-card";
-      card.style.cssText = "border:1px solid var(--card-border);border-radius:13px;padding:12px 14px 13px;background:var(--card-bg);box-shadow:var(--shadow-soft);display:flex;flex-direction:column;";
+      card.style.cssText = "border:1px solid var(--card-border);border-radius:16px;padding:18px 20px 19px;background:var(--card-bg);box-shadow:var(--shadow-soft);display:flex;flex-direction:column;";
 
       var head = document.createElement("div");
-      head.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:8px;" + (hasItems ? "margin-bottom:8px;" : "");
+      head.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:10px;" + (hasItems ? "margin-bottom:12px;" : "");
 
       var titleWrap = document.createElement("div");
-      titleWrap.style.cssText = "display:flex;align-items:center;gap:7px;min-width:0;";
+      titleWrap.style.cssText = "display:flex;align-items:center;gap:10px;min-width:0;";
 
       var iconEl = document.createElement("span");
-      iconEl.style.cssText = "width:22px;height:22px;border-radius:6px;background:" + softBg + ";display:flex;align-items:center;justify-content:center;font-size:11.5px;flex-shrink:0;";
+      iconEl.style.cssText = "width:30px;height:30px;border-radius:8px;background:" + softBg + ";display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;";
       iconEl.textContent = meta.icon;
 
       var titleEl = document.createElement("span");
-      titleEl.style.cssText = "font-size:12.5px;font-weight:600;color:var(--text-title);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
+      titleEl.style.cssText = "font-size:15.5px;font-weight:600;color:var(--text-title);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
       titleEl.textContent = meta.label;
 
       titleWrap.appendChild(iconEl);
       titleWrap.appendChild(titleEl);
 
       var badge = document.createElement("span");
-      badge.style.cssText = "font-size:11px;font-weight:700;color:" + (hasItems ? "#fff" : accentColor) + ";background:" + (hasItems ? accentColor : softBg) + ";border-radius:999px;padding:2px 8px;flex-shrink:0;";
+      badge.style.cssText = "font-size:13px;font-weight:700;color:" + (hasItems ? "#fff" : accentColor) + ";background:" + (hasItems ? accentColor : softBg) + ";border-radius:999px;padding:3px 11px;flex-shrink:0;";
       badge.textContent = items.length;
 
       head.appendChild(titleWrap);
@@ -411,13 +411,13 @@
 
       if (hasItems) {
         var list = document.createElement("div");
-        list.style.cssText = "max-height:140px;overflow-y:auto;border-top:1px solid var(--divider);margin-top:2px;padding-top:6px;";
+        list.style.cssText = "max-height:220px;overflow-y:auto;border-top:1px solid var(--divider);margin-top:2px;padding-top:9px;";
         items.forEach(function (item) {
           var row = document.createElement("div");
           row.className = "rl-row";
           var resolved = item.resolved === true;
           var hasOrigin = typeof item.originMs === "number";
-          row.style.cssText = "font-size:12px;line-height:1.4;padding:5px 4px;border-radius:6px;color:" + (resolved ? "var(--text-muted)" : "var(--text-primary)") + ";" + (resolved ? "text-decoration:line-through;text-decoration-color:var(--text-muted);" : "") + (hasOrigin ? "cursor:pointer;" : "");
+          row.style.cssText = "font-size:14.5px;line-height:1.5;padding:8px 6px;border-radius:8px;color:" + (resolved ? "var(--text-muted)" : "var(--text-primary)") + ";" + (resolved ? "text-decoration:line-through;text-decoration-color:var(--text-muted);" : "") + (hasOrigin ? "cursor:pointer;" : "");
           var age = typeof item.ageHours === "number" ? "<span style='color:var(--text-muted);font-weight:500;'> · " + fmtDuration(item.ageHours) + (hasOrigin ? " ▾" : "") + "</span>" : "";
           var check = resolved ? "<span style='text-decoration:none;color:#1f9d63;font-weight:700;'>✓ </span>" : "";
           var mainLine = document.createElement("div");
@@ -426,7 +426,7 @@
 
           if (hasOrigin) {
             var detail = document.createElement("div");
-            detail.style.cssText = "display:none;font-size:11px;color:var(--text-muted);margin-top:3px;padding-left:2px;";
+            detail.style.cssText = "display:none;font-size:13px;color:var(--text-muted);margin-top:4px;padding-left:2px;";
             detail.textContent = "Comenzó: " + fmt(item.originMs);
             row.appendChild(detail);
             row.addEventListener("click", function () {
@@ -439,7 +439,7 @@
         card.appendChild(list);
       } else {
         var empty = document.createElement("div");
-        empty.style.cssText = "font-size:11.5px;color:var(--text-muted);font-style:italic;";
+        empty.style.cssText = "font-size:14px;color:var(--text-muted);font-style:italic;";
         empty.textContent = "Sin novedades";
         card.appendChild(empty);
       }
@@ -512,7 +512,7 @@
   if (lastRun && lastRun.error) {
     var errBox = document.createElement("div");
     var dark0 = isDark();
-    errBox.style.cssText = "border:1px solid " + (dark0 ? "#5c3630" : "#f3c9c2") + ";background:" + (dark0 ? "#2c1c1a" : "#fdf1ef") + ";border-radius:12px;padding:12px 14px;font-size:12.5px;color:" + (dark0 ? "#f0a598" : "#a83b2a") + ";display:flex;gap:8px;align-items:flex-start;margin-bottom:12px;";
+    errBox.style.cssText = "border:1px solid " + (dark0 ? "#5c3630" : "#f3c9c2") + ";background:" + (dark0 ? "#2c1c1a" : "#fdf1ef") + ";border-radius:14px;padding:15px 17px;font-size:14.5px;color:" + (dark0 ? "#f0a598" : "#a83b2a") + ";display:flex;gap:10px;align-items:flex-start;margin-bottom:16px;";
     errBox.innerHTML = "<span>⚠️</span><span>La última corrida tuvo un error: " + lastRun.error + "</span>";
     cardsEl.parentNode.insertBefore(errBox, cardsEl);
   }
