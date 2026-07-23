@@ -36,6 +36,11 @@ IT_RECIPIENT_KEYWORDS = [
     "help desk billetera",
     "help desk",
 ]
+# admite singular/plural y con/sin tilde: "Gestión de Incidente Masivo",
+# "Gestion de Incidentes Masivos", etc. (el nombre para mostrar varía según
+# quién firme el mail, aunque la dirección de correo es siempre la misma)
+IT_RECIPIENT_RE = re.compile(r"gesti[oó]n\s+de\s+incidentes?\s+masivos?", re.IGNORECASE)
+IT_RECIPIENT_ADDR_HINTS = ["incidentereportado@claro.com.ar"]
 ING_RECIPIENT_KEYWORDS = ["soc", "voc", "noc"]
 
 CLOSURE_PATTERNS = [
@@ -137,10 +142,12 @@ def gm_thread_id_hex(imap, uid):
             raw = raw.decode(errors="replace")
         m = re.search(r"X-GM-THRID\s+(\d+)", raw)
         if not m:
+            log(f"[gm_thread_id_hex] uid={uid} sin match en respuesta: {raw!r}")
             return None
         thrid_int = int(m.group(1))
         return format(thrid_int, "x")
-    except Exception:
+    except Exception as e:
+        log(f"[gm_thread_id_hex] uid={uid} excepcion: {type(e).__name__}: {e}")
         return None
 
 
@@ -227,7 +234,11 @@ def classify(imap, uid, msg):
 
     # 3. Reportes Tecnica -> IT / Ingenieria
     if REPORTES_TECNICA_HINT in sender_addr:
-        matched_it = any(k in recipients_text for k in IT_RECIPIENT_KEYWORDS)
+        matched_it = (
+            any(k in recipients_text for k in IT_RECIPIENT_KEYWORDS)
+            or bool(IT_RECIPIENT_RE.search(recipients_text))
+            or any(addr in recipients_text for addr in IT_RECIPIENT_ADDR_HINTS)
+        )
         if matched_it:
             thrid = gm_thread_id_hex(imap, uid)
             ts = thread_first_message_ms(imap, thrid, own_ms) if thrid else own_ms
