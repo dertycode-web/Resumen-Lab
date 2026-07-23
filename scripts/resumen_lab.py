@@ -231,6 +231,31 @@ def earliest_quoted_date_ms(body):
     return min(found) if found else None
 
 
+def is_it_escalation_recipient(recipients_text):
+    return (
+        any(k in recipients_text for k in IT_RECIPIENT_KEYWORDS)
+        or bool(IT_RECIPIENT_RE.search(recipients_text))
+        or any(addr in recipients_text for addr in IT_RECIPIENT_ADDR_HINTS)
+    )
+
+
+def classify_escalamientos_it(imap, uid, subject, body, recipients_text, own_ms):
+    """Solapa 'Escalamientos IT': cualquier mail (de cualquier remitente)
+    enviado a Gestion de Incidentes / Help Desk / Help Desk Billetera.
+    Independiente de la clasificacion principal (puede coexistir con ella)."""
+    if not is_it_escalation_recipient(recipients_text):
+        return None
+    thrid = gm_thread_id_hex(imap, uid)
+    origin_ms = thread_first_message_ms(imap, thrid, own_ms) if thrid else own_ms
+    quoted_ms = earliest_quoted_date_ms(body)
+    if quoted_ms:
+        origin_ms = min(origin_ms, quoted_ms)
+    return {
+        "category": "escalamientosIT", "timestamp": own_ms, "firstSeen": origin_ms,
+        "subject": subject, "thread_id": thrid,
+    }
+
+
 def classify(imap, uid, msg):
     subject = decode_mime_header(msg.get("Subject")) or ""
     sender_raw = decode_mime_header(msg.get("From")) or ""
@@ -265,11 +290,7 @@ def classify(imap, uid, msg):
 
     # 3. Reportes Tecnica -> IT / Ingenieria
     if REPORTES_TECNICA_HINT in sender_addr:
-        matched_it = (
-            any(k in recipients_text for k in IT_RECIPIENT_KEYWORDS)
-            or bool(IT_RECIPIENT_RE.search(recipients_text))
-            or any(addr in recipients_text for addr in IT_RECIPIENT_ADDR_HINTS)
-        )
+        matched_it = is_it_escalation_recipient(recipients_text)
         if matched_it:
             thrid = gm_thread_id_hex(imap, uid)
             origin_ms = thread_first_message_ms(imap, thrid, own_ms) if thrid else own_ms
@@ -387,21 +408,7 @@ def main():
 
             mails_by_id = {m["id"]: m for m in data["mails"]}
 
-            for uid in uids:
-                msg = fetch_message(imap, uid)
-                if msg is None:
-                    continue
-                own_ms = epoch_ms_from_date_header(msg)
-                if own_ms is None or own_ms < search_window_start or own_ms > now_ms + 5 * 60 * 1000:
-                    continue
-
-                result = classify(imap, uid, msg)
-                if result is None:
-                    continue
-
-                thrid = result.pop("thread_id", None)
-                record_id = thrid or f"uid-{uid.decode() if isinstance(uid, bytes) else uid}"
-
+            def merge_result(record_id, result, own_ms):
                 existing = mails_by_id.get(record_id)
                 new_ts = result["timestamp"] if result["timestamp"] is not None else own_ms
                 if existing:
@@ -429,7 +436,36 @@ def main():
                     if "resolved" in result:
                         record["resolved"] = result["resolved"]
                     mails_by_id[record_id] = record
-                new_or_updated += 1
+
+            for uid in uids:
+                msg = fetch_message(imap, uid)
+                if msg is None:
+                    continue
+                own_ms = epoch_ms_from_date_header(msg)
+                if own_ms is None or own_ms < search_window_start or own_ms > now_ms + 5 * 60 * 1000:
+                    continue
+                uid_str = uid.decode() if isinstance(uid, bytes) else uid
+
+                result = classify(imap, uid, msg)
+                if result is not None:
+                    thrid = result.pop("thread_id", None)
+                    record_id = thrid or f"uid-{uid_str}"
+                    merge_result(record_id, result, own_ms)
+                    new_or_updated += 1
+
+                # Solapa "Escalamientos IT": independiente de la clasificacion
+                # principal, por eso usa su propio namespace de id (sufijo ':escIT')
+                subject = decode_mime_header(msg.get("Subject")) or ""
+                to_text = addr_list_text(msg, "To").lower()
+                cc_text = addr_list_text(msg, "Cc").lower()
+                recipients_text = to_text + " " + cc_text
+                body = get_body_text(msg)
+                esc_result = classify_escalamientos_it(imap, uid, subject, body, recipients_text, own_ms)
+                if esc_result is not None:
+                    thrid = esc_result.pop("thread_id", None)
+                    esc_record_id = (thrid or f"uid-{uid_str}") + ":escIT"
+                    merge_result(esc_record_id, esc_result, own_ms)
+                    new_or_updated += 1
 
             data["mails"] = list(mails_by_id.values())
             imap.logout()
