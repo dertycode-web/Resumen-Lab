@@ -130,12 +130,28 @@ def epoch_ms_from_date_header(msg):
         return None
 
 
+# Caches por corrida (el proceso arranca de cero cada vez que corre el
+# workflow, asi que no hace falta persistirlos): evitan repetir las mismas
+# consultas IMAP cuando varios mails del mismo hilo aparecen en la misma
+# corrida, o cuando la solapa "Escalamientos IT" vuelve a pedir el thread id
+# de un mail que "classify()" ya habia resuelto un momento antes.
+_THRID_CACHE = {}
+_THREAD_UIDS_CACHE = {}
+_MSG_CACHE = {}
+_THREAD_FIRST_MS_CACHE = {}
+_THREAD_RESOLVED_CACHE = {}
+
+
 def gm_thread_id_hex(imap, uid):
     """Fetch Gmail's X-GM-THRID extension and return it as lowercase hex,
     matching the format Gmail's web/API thread ids use."""
+    uid_key = uid.decode() if isinstance(uid, bytes) else uid
+    if uid_key in _THRID_CACHE:
+        return _THRID_CACHE[uid_key]
     try:
         typ, data = imap.uid("fetch", uid, "(X-GM-THRID)")
         if typ != "OK" or not data or not data[0]:
+            _THRID_CACHE[uid_key] = None
             return None
         raw = data[0]
         if isinstance(raw, bytes):
@@ -143,37 +159,48 @@ def gm_thread_id_hex(imap, uid):
         m = re.search(r"X-GM-THRID\s+(\d+)", raw)
         if not m:
             log(f"[gm_thread_id_hex] uid={uid} sin match en respuesta: {raw!r}")
+            _THRID_CACHE[uid_key] = None
             return None
         thrid_int = int(m.group(1))
-        return format(thrid_int, "x")
+        result = format(thrid_int, "x")
+        _THRID_CACHE[uid_key] = result
+        return result
     except Exception as e:
         log(f"[gm_thread_id_hex] uid={uid} excepcion: {type(e).__name__}: {e}")
+        _THRID_CACHE[uid_key] = None
         return None
 
 
 def thread_message_uids(imap, thrid_hex):
+    if thrid_hex in _THREAD_UIDS_CACHE:
+        return _THREAD_UIDS_CACHE[thrid_hex]
     try:
         thrid_int = int(thrid_hex, 16)
         typ, data = imap.uid("search", None, "X-GM-THRID", str(thrid_int))
-        if typ != "OK" or not data or not data[0]:
-            return []
-        return data[0].split()
+        result = data[0].split() if typ == "OK" and data and data[0] else []
     except Exception:
-        return []
+        result = []
+    _THREAD_UIDS_CACHE[thrid_hex] = result
+    return result
 
 
 def fetch_message(imap, uid):
+    uid_key = uid.decode() if isinstance(uid, bytes) else uid
+    if uid_key in _MSG_CACHE:
+        return _MSG_CACHE[uid_key]
     typ, data = imap.uid("fetch", uid, "(RFC822)")
-    if typ != "OK" or not data or not data[0]:
-        return None
-    raw = data[0][1]
-    return email.message_from_bytes(raw)
+    msg = None
+    if typ == "OK" and data and data[0]:
+        raw = data[0][1]
+        msg = email.message_from_bytes(raw)
+    _MSG_CACHE[uid_key] = msg
+    return msg
 
 
 def thread_first_message_ms(imap, thrid_hex, fallback_ms):
+    if thrid_hex in _THREAD_FIRST_MS_CACHE:
+        return _THREAD_FIRST_MS_CACHE[thrid_hex]
     uids = thread_message_uids(imap, thrid_hex)
-    if not uids:
-        return fallback_ms
     dates = []
     for u in uids:
         m = fetch_message(imap, u)
@@ -182,13 +209,16 @@ def thread_first_message_ms(imap, thrid_hex, fallback_ms):
         ms = epoch_ms_from_date_header(m)
         if ms is not None:
             dates.append(ms)
-    if not dates:
-        return fallback_ms
-    return min(dates)
+    result = min(dates) if dates else fallback_ms
+    _THREAD_FIRST_MS_CACHE[thrid_hex] = result
+    return result
 
 
 def thread_is_resolved(imap, thrid_hex):
+    if thrid_hex in _THREAD_RESOLVED_CACHE:
+        return _THREAD_RESOLVED_CACHE[thrid_hex]
     uids = thread_message_uids(imap, thrid_hex)
+    result = False
     for u in uids:
         m = fetch_message(imap, u)
         if m is None:
@@ -196,8 +226,10 @@ def thread_is_resolved(imap, thrid_hex):
         subject = decode_mime_header(m.get("Subject"))
         body = get_body_text(m)
         if CLOSURE_RE.search(subject) or CLOSURE_RE.search(body):
-            return True
-    return False
+            result = True
+            break
+    _THREAD_RESOLVED_CACHE[thrid_hex] = result
+    return result
 
 
 MESES_ES = {
