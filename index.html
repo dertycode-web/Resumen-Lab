@@ -1,9 +1,16 @@
-<!DOCTYPE html>
-<script type="application/json" id="cowork-artifact-meta">
+<!DOCTYPE html><script type="application/json" id="cowork-artifact-meta">
 {
   "name": "Resumen Lab",
-  "schemaVersion": 1,
-  "description": "Resumen periódico de escalamientos de Reportes Técnica / Afectación Masiva, leído desde los mails reenviados a la casilla de Gmail. Se actualiza cada corrida (06/12/18/00hs) y guarda historial de corridas anteriores."
+  "schemaVersion": 2,
+  "description": "Resumen periódico de escalamientos de Reportes Técnica / Afectación Masiva, leído desde los mails reenviados a la casilla de Gmail. Guarda un log de mails individuales (con su fecha real) para poder filtrar por cualquier rango de fecha/hora, no solo por corridas de 6hs.",
+  "mcpTools": [
+    "mcp__51477752-67a2-4c26-b5b8-05531e6d3619__search_threads",
+    "mcp__51477752-67a2-4c26-b5b8-05531e6d3619__get_thread"
+  ],
+  "mcpServerNames": [
+    "Gmail",
+    "Gmail"
+  ]
 }
 </script>
 <html>
@@ -66,10 +73,10 @@
   }
   * { box-sizing: border-box; }
   body { -webkit-font-smoothing: antialiased; }
-  body, .rl-card, #runPicker, #customFrom, #customTo, #customBtn, #themeToggle {
+  body, .rl-card, #rangePreset, #customFrom, #customTo, #customBtn, #themeToggle {
     transition: background-color .18s ease, border-color .18s ease, color .18s ease, box-shadow .18s ease;
   }
-  #runPicker:focus, #customFrom:focus, #customTo:focus, #customBtn:focus, #themeToggle:focus { outline: 2px solid var(--accent-border); outline-offset: 1px; }
+  #rangePreset:focus, #customFrom:focus, #customTo:focus, #customBtn:focus, #themeToggle:focus { outline: 2px solid var(--accent-border); outline-offset: 1px; }
   #customBtn:hover { background: var(--accent-bg) !important; border-color: var(--accent) !important; }
   #themeToggle:hover { border-color: var(--accent) !important; }
   .rl-card:hover { box-shadow: var(--shadow-card-hover); }
@@ -94,7 +101,7 @@
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
       <button id="themeToggle" title="Cambiar tema" style="width:36px;height:36px;border-radius:9px;border:1px solid var(--toggle-border);background:var(--toggle-bg);cursor:pointer;font-size:15px;display:flex;align-items:center;justify-content:center;box-shadow:var(--shadow-soft);flex-shrink:0;">🌙</button>
-      <select id="runPicker" style="height:36px;border:1px solid var(--input-border);border-radius:9px;padding:0 10px;font-size:12.5px;background:var(--input-bg);color:var(--input-text);box-shadow:var(--shadow-soft);cursor:pointer;"></select>
+      <select id="rangePreset" style="height:36px;border:1px solid var(--input-border);border-radius:9px;padding:0 10px;font-size:12.5px;background:var(--input-bg);color:var(--input-text);box-shadow:var(--shadow-soft);cursor:pointer;"></select>
     </div>
   </div>
 
@@ -119,34 +126,13 @@
   <div id="cards" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"></div>
 
   <p style="font-size:11.5px;color:var(--text-muted);margin-top:24px;text-align:center;line-height:1.5;">
-    Se actualiza automáticamente cada corrida (06:00 · 12:00 · 18:00 · 00:00)<br>
+    Se relee la bandeja cada 6 horas (06:00 · 12:00 · 18:00 · 00:00) y cada mail queda guardado con su fecha real.<br>
     Fuente: mails reenviados desde lautaro.rojas@claro.com.ar a esta casilla de Gmail.
   </p>
 </div>
 
 <script id="resumen-data" type="application/json">
 {
-  "runs": [
-    {
-      "timestamp": 1784810623000,
-      "rangeFrom": 1784789023000,
-      "rangeTo": 1784810623000,
-      "buckets": {
-        "afectacionMasiva": [],
-        "itNuevo": [],
-        "itEnCurso": [],
-        "ingenieriaNuevo": [],
-        "ingenieriaEnCurso": [],
-        "antiguedadSinConfirmar": [],
-        "tareas": [
-          {
-            "subject": "Reprogramación Ventana Trabajo || SERVICIOS MASIVOS - Argentina || CONFIGURACION DWDM || 2026-07-28 00:00Hs GMT-3"
-          }
-        ],
-        "pedidosReferentes": []
-      }
-    }
-  ],
   "mails": [
     {
       "id": "uid-23",
@@ -228,34 +214,44 @@
   var currentTheme = getInitialTheme();
   applyTheme(currentTheme);
 
-  themeToggle.addEventListener("click", function () {
-    currentTheme = currentTheme === "dark" ? "light" : "dark";
-    applyTheme(currentTheme);
-    try { localStorage.setItem(THEME_KEY, currentTheme); } catch (e) {}
-  });
-
-  // ---- Data rendering ----
+  // ---- Data ----
   var dataEl = document.getElementById("resumen-data");
-  var data = JSON.parse(dataEl.textContent || '{"runs":[]}');
-  var runs = data.runs || [];
+  var data = JSON.parse(dataEl.textContent || '{"mails":[],"lastRun":null}');
+  var mails = data.mails || [];
+  var lastRun = data.lastRun || null;
 
+  // Base categories stored per-mail. "it" and "ingenieria" get split into
+  // Nuevo/EnCurso at render time based on how old the thread is RIGHT NOW —
+  // so that split is always accurate, even for mails logged a while ago.
   var CATEGORY_META = [
     { key: "afectacionMasiva", label: "Afectaciones masivas", icon: "🚨", rgb: "216,71,47" },
     { key: "itNuevo", label: "Escalamientos nuevos · IT", icon: "🆕", rgb: "44,123,229" },
     { key: "itEnCurso", label: "Escalamientos en curso · IT", icon: "🔄", rgb: "44,123,229" },
     { key: "ingenieriaNuevo", label: "Escalamientos nuevos · Ingeniería", icon: "🆕", rgb: "76,139,43" },
     { key: "ingenieriaEnCurso", label: "Escalamientos en curso · Ingeniería", icon: "🔄", rgb: "76,139,43" },
-    { key: "antiguedadSinConfirmar", label: "Antigüedad sin confirmar", icon: "❓", rgb: "180,114,15" },
+    { key: "pedidosReferentes", label: "Pedidos Referentes", icon: "📨", rgb: "24,138,102" },
     { key: "tareas", label: "Tareas (WBS)", icon: "📋", rgb: "106,92,245" },
-    { key: "pedidosReferentes", label: "Pedidos Referentes", icon: "📨", rgb: "24,138,102" }
+    { key: "informesFija", label: "Informes de Fija", icon: "☎️", rgb: "13,120,140" },
+    { key: "informesMovil", label: "Informes de Móvil", icon: "📱", rgb: "163,86,196" }
   ];
 
-  var picker = document.getElementById("runPicker");
+  var PRESETS = [
+    { key: "6h", label: "Últimas 6 horas", hours: 6 },
+    { key: "12h", label: "Últimas 12 horas", hours: 12 },
+    { key: "24h", label: "Últimas 24 horas", hours: 24 },
+    { key: "7d", label: "Últimos 7 días", hours: 24 * 7 },
+    { key: "30d", label: "Últimos 30 días", hours: 24 * 30 },
+    { key: "all", label: "Todo el historial", hours: null }
+  ];
+
+  var presetEl = document.getElementById("rangePreset");
   var rangeLine = document.getElementById("rangeLine");
   var cardsEl = document.getElementById("cards");
 
+  var currentRange = null; // { fromMs, toMs, label, mailCount }
+
   function fmt(ts) {
-    if (!ts) return "";
+    if (!ts && ts !== 0) return "";
     var d = new Date(ts);
     return d.toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
   }
@@ -264,42 +260,48 @@
     return root.getAttribute("data-theme") === "dark";
   }
 
-  function populatePicker() {
-    picker.innerHTML = "";
-    if (!runs.length) {
+  function populatePresets() {
+    presetEl.innerHTML = "";
+    PRESETS.forEach(function (p) {
       var opt = document.createElement("option");
-      opt.textContent = "Sin corridas todavía";
-      picker.appendChild(opt);
-      return;
-    }
-    runs.forEach(function (run, i) {
-      var opt = document.createElement("option");
-      opt.value = i;
-      opt.textContent = fmt(run.timestamp);
-      picker.appendChild(opt);
+      opt.value = p.key;
+      opt.textContent = p.label;
+      presetEl.appendChild(opt);
     });
   }
 
-  function renderRun(run) {
+  function buildBuckets(mailsInRange) {
+    var nowMs = Date.now();
+    var buckets = {};
+    CATEGORY_META.forEach(function (m) { buckets[m.key] = []; });
+
+    var sorted = mailsInRange.slice().sort(function (a, b) { return b.timestamp - a.timestamp; });
+
+    sorted.forEach(function (m) {
+      if (m.category === "afectacionMasiva") {
+        buckets.afectacionMasiva.push({ subject: m.subject, resolved: m.resolved === true });
+      } else if (m.category === "it" || m.category === "ingenieria") {
+        var ageHours = (nowMs - m.timestamp) / 3600000;
+        var key = m.category + (ageHours >= 5 ? "EnCurso" : "Nuevo");
+        buckets[key].push({ subject: m.subject, ageHours: ageHours });
+      } else if (m.category === "tareas") {
+        buckets.tareas.push({ subject: m.subject });
+      } else if (m.category === "pedidosReferentes") {
+        buckets.pedidosReferentes.push({ subject: m.subject });
+      } else if (m.category === "informesFija") {
+        buckets.informesFija.push({ subject: m.subject });
+      } else if (m.category === "informesMovil") {
+        buckets.informesMovil.push({ subject: m.subject });
+      }
+    });
+
+    return buckets;
+  }
+
+  function renderCards(buckets, dark) {
     cardsEl.innerHTML = "";
-    if (!run) {
-      rangeLine.textContent = "Todavía no se generó ningún resumen.";
-      return;
-    }
-    rangeLine.textContent = "Última lectura " + fmt(run.timestamp) +
-      (run.rangeFrom ? "  ·  rango " + fmt(run.rangeFrom) + " → " + fmt(run.rangeTo) : "");
-
-    var dark = isDark();
-
-    if (run.error) {
-      var errBox = document.createElement("div");
-      errBox.style.cssText = "grid-column:1 / -1;border:1px solid " + (dark ? "#5c3630" : "#f3c9c2") + ";background:" + (dark ? "#2c1c1a" : "#fdf1ef") + ";border-radius:12px;padding:12px 14px;font-size:12.5px;color:" + (dark ? "#f0a598" : "#a83b2a") + ";display:flex;gap:8px;align-items:flex-start;";
-      errBox.innerHTML = "<span>⚠️</span><span>Error en la corrida: " + run.error + "</span>";
-      cardsEl.appendChild(errBox);
-    }
-
     CATEGORY_META.forEach(function (meta) {
-      var items = (run.buckets && run.buckets[meta.key]) || [];
+      var items = (buckets && buckets[meta.key]) || [];
       var hasItems = items.length > 0;
       var accentColor = dark ? "rgba(" + meta.rgb + ",0.95)" : "rgb(" + meta.rgb + ")";
       var softBg = dark ? "rgba(" + meta.rgb + ",0.22)" : "rgba(" + meta.rgb + ",0.12)";
@@ -358,35 +360,78 @@
     });
   }
 
-  populatePicker();
-  renderRun(runs[0]);
+  function applyRange(fromMs, toMs, label) {
+    var filtered = mails.filter(function (m) { return m.timestamp >= fromMs && m.timestamp <= toMs; });
+    currentRange = { fromMs: fromMs, toMs: toMs, label: label };
 
-  picker.addEventListener("change", function () {
-    renderRun(runs[picker.value]);
+    var dark = isDark();
+    rangeLine.textContent = label + "  ·  rango " + fmt(fromMs) + " → " + fmt(toMs) +
+      "  ·  " + filtered.length + (filtered.length === 1 ? " mail" : " mails") +
+      (lastRun ? "  ·  última lectura de bandeja " + fmt(lastRun.timestamp) : "");
+
+    renderCards(buildBuckets(filtered), dark);
+  }
+
+  function applyPreset(key) {
+    var preset = PRESETS.filter(function (p) { return p.key === key; })[0] || PRESETS[0];
+    var toMs = Date.now();
+    var fromMs = preset.hours === null ? 0 : toMs - preset.hours * 3600000;
+    applyRange(fromMs, toMs, preset.label);
+  }
+
+  function rerenderCurrent() {
+    if (currentRange) {
+      applyRange(currentRange.fromMs, currentRange.toMs, currentRange.label);
+    }
+  }
+
+  if (lastRun && lastRun.error) {
+    var errBox = document.createElement("div");
+    var dark0 = isDark();
+    errBox.style.cssText = "border:1px solid " + (dark0 ? "#5c3630" : "#f3c9c2") + ";background:" + (dark0 ? "#2c1c1a" : "#fdf1ef") + ";border-radius:12px;padding:12px 14px;font-size:12.5px;color:" + (dark0 ? "#f0a598" : "#a83b2a") + ";display:flex;gap:8px;align-items:flex-start;margin-bottom:12px;";
+    errBox.innerHTML = "<span>⚠️</span><span>La última corrida tuvo un error: " + lastRun.error + "</span>";
+    cardsEl.parentNode.insertBefore(errBox, cardsEl);
+  }
+
+  populatePresets();
+  applyPreset("6h");
+
+  presetEl.addEventListener("change", function () {
+    customMsgEl().textContent = "";
+    applyPreset(presetEl.value);
   });
 
   themeToggle.addEventListener("click", function () {
-    // re-render so category colors adapt to the new theme
-    renderRun(runs[picker.value || 0]);
+    currentTheme = currentTheme === "dark" ? "light" : "dark";
+    applyTheme(currentTheme);
+    try { localStorage.setItem(THEME_KEY, currentTheme); } catch (e) {}
+    rerenderCurrent();
   });
 
   var customBtn = document.getElementById("customBtn");
-  var customMsg = document.getElementById("customMsg");
+  function customMsgEl() { return document.getElementById("customMsg"); }
+
   customBtn.addEventListener("click", function () {
     var fromVal = document.getElementById("customFrom").value;
     var toVal = document.getElementById("customTo").value;
+    var msg = customMsgEl();
     if (!fromVal || !toVal) {
-      customMsg.textContent = "Completá Desde y Hasta.";
+      msg.textContent = "Completá Desde y Hasta.";
       return;
     }
-    var fromNice = new Date(fromVal).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
-    var toNice = new Date(toVal).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
-    if (typeof sendPrompt === "function") {
-      customMsg.textContent = "Pedido enviado al chat...";
-      sendPrompt("Generá el Resumen LAB para el rango del " + fromNice + " al " + toNice + " y actualizá el artifact.");
-    } else {
-      customMsg.textContent = "Esta función solo está disponible dentro de Cowork.";
+    var fromMs = new Date(fromVal).getTime();
+    var toMs = new Date(toVal).getTime();
+    if (isNaN(fromMs) || isNaN(toMs)) {
+      msg.textContent = "Fechas inválidas.";
+      return;
     }
+    if (fromMs > toMs) {
+      msg.textContent = "\"Desde\" tiene que ser anterior a \"Hasta\".";
+      return;
+    }
+    msg.textContent = "";
+    presetEl.selectedIndex = -1;
+    applyRange(fromMs, toMs, "Resumen personalizado");
   });
 })();
 </script>
