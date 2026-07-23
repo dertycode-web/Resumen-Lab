@@ -397,7 +397,7 @@ def main():
         log(f"ERROR: {error_msg}")
     else:
         try:
-            imap = imaplib.IMAP4_SSL(IMAP_HOST)
+            imap = imaplib.IMAP4_SSL(IMAP_HOST, timeout=25)
             imap.login(gmail_user, gmail_pass)
             imap.select("INBOX")
 
