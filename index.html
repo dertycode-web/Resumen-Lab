@@ -97,15 +97,16 @@
       <div>
         <h1 style="font-size:21px;font-weight:600;margin:0;letter-spacing:-0.2px;color:var(--text-title);">Resumen LAB</h1>
         <div id="rangeLine" style="font-size:12.5px;color:var(--text-secondary);margin-top:2px;"></div>
+        <div id="rangeLineEscIT" style="display:none;font-size:12.5px;color:var(--text-secondary);margin-top:2px;"></div>
       </div>
     </div>
-    <div style="display:flex;align-items:center;gap:8px;">
+    <div id="rangeControls" style="display:flex;align-items:center;gap:8px;">
       <button id="themeToggle" title="Cambiar tema" style="width:36px;height:36px;border-radius:9px;border:1px solid var(--toggle-border);background:var(--toggle-bg);cursor:pointer;font-size:15px;display:flex;align-items:center;justify-content:center;box-shadow:var(--shadow-soft);flex-shrink:0;">🌙</button>
       <select id="rangePreset" style="height:36px;border:1px solid var(--input-border);border-radius:9px;padding:0 10px;font-size:12.5px;background:var(--input-bg);color:var(--input-text);box-shadow:var(--shadow-soft);cursor:pointer;"></select>
     </div>
   </div>
 
-  <div style="border:1px solid var(--panel-border);border-radius:14px;padding:14px 16px;margin-bottom:20px;background:var(--panel-bg);box-shadow:var(--shadow-soft);">
+  <div id="rangePanel" style="border:1px solid var(--panel-border);border-radius:14px;padding:14px 16px;margin-bottom:20px;background:var(--panel-bg);box-shadow:var(--shadow-soft);">
     <div style="font-size:12.5px;font-weight:600;margin-bottom:10px;color:var(--text-title);display:flex;align-items:center;gap:6px;">
       <span style="font-size:13px;">🗓️</span> Pedir resumen de un rango puntual
     </div>
@@ -280,6 +281,8 @@
   var rangeLine = document.getElementById("rangeLine");
   var cardsEl = document.getElementById("cards");
   var cardsEscITEl = document.getElementById("cardsEscIT");
+  var rangeLineEscITEl = document.getElementById("rangeLineEscIT");
+  var rangePanelEl = document.getElementById("rangePanel");
   var tabButtons = document.querySelectorAll(".rl-tab");
   var currentTab = "resumen";
 
@@ -289,8 +292,14 @@
       btn.style.color = active ? "var(--accent)" : "var(--text-secondary)";
       btn.style.borderBottomColor = active ? "var(--accent)" : "transparent";
     });
-    cardsEl.style.display = currentTab === "resumen" ? "grid" : "none";
-    cardsEscITEl.style.display = currentTab === "escalamientosIT" ? "grid" : "none";
+    var isResumen = currentTab === "resumen";
+    cardsEl.style.display = isResumen ? "grid" : "none";
+    cardsEscITEl.style.display = isResumen ? "none" : "grid";
+    rangeLine.style.display = isResumen ? "block" : "none";
+    rangeLineEscITEl.style.display = isResumen ? "none" : "block";
+    rangePanelEl.style.display = isResumen ? "block" : "none";
+    presetEl.style.display = isResumen ? "block" : "none";
+    if (!isResumen) renderEscalamientosIT();
   }
 
   tabButtons.forEach(function (btn) {
@@ -299,7 +308,6 @@
       applyTabStyles();
     });
   });
-  applyTabStyles();
 
   var currentRange = null; // { fromMs, toMs, label, mailCount }
 
@@ -350,11 +358,6 @@
         var ageHours = (nowMs - originMs) / 3600000;
         var key = m.category + (ageHours >= 5 ? "EnCurso" : "Nuevo");
         buckets[key].push({ subject: m.subject, ageHours: ageHours, originMs: originMs });
-      } else if (m.category === "escalamientosIT") {
-        var escOriginMs = (typeof m.firstSeen === "number") ? m.firstSeen : m.timestamp;
-        var escAgeHours = (nowMs - escOriginMs) / 3600000;
-        var escKey = escAgeHours >= 24 ? "escalamientosITEnCurso" : "escalamientosITNuevo";
-        buckets[escKey].push({ subject: m.subject, ageHours: escAgeHours, originMs: escOriginMs });
       } else if (m.category === "tareas") {
         buckets.tareas.push({ subject: m.subject });
       } else if (m.category === "pedidosReferentes") {
@@ -456,6 +459,40 @@
 
     var buckets = buildBuckets(filtered);
     renderCards(buckets, dark, cardsEl, CATEGORY_META);
+  }
+
+  var ARG_OFFSET_MS = 3 * 3600 * 1000; // Argentina es UTC-3 fijo
+
+  function startOfArgTodayMs(nowMs) {
+    var shifted = new Date(nowMs - ARG_OFFSET_MS);
+    var startShifted = Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate(), 0, 0, 0, 0);
+    return startShifted + ARG_OFFSET_MS;
+  }
+
+  function renderEscalamientosIT() {
+    var nowMs = Date.now();
+    var todayStartMs = startOfArgTodayMs(nowMs);
+    var dark = isDark();
+
+    var todays = mails.filter(function (m) {
+      return m.category === "escalamientosIT" && m.timestamp >= todayStartMs && m.timestamp <= nowMs;
+    });
+
+    var buckets = { escalamientosITNuevo: [], escalamientosITEnCurso: [] };
+    todays.forEach(function (m) {
+      var originMs = (typeof m.firstSeen === "number") ? m.firstSeen : m.timestamp;
+      var ageHours = (nowMs - originMs) / 3600000;
+      // "Nuevo" = el problema empezo hoy (mismo dia calendario Argentina).
+      // "En curso" = empezo un dia anterior, pero tuvo actividad hoy.
+      var key = originMs >= todayStartMs ? "escalamientosITNuevo" : "escalamientosITEnCurso";
+      buckets[key].push({ subject: m.subject, ageHours: ageHours, originMs: originMs });
+    });
+
+    var todayLabel = new Date(todayStartMs).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
+    rangeLineEscITEl.textContent = "Hoy " + todayLabel + " (00:00 hora Argentina → ahora)  ·  " +
+      todays.length + (todays.length === 1 ? " mail" : " mails") +
+      (lastRun ? "  ·  última lectura de bandeja " + fmt(lastRun.timestamp) : "");
+
     renderCards(buckets, dark, cardsEscITEl, ESCALAMIENTOS_IT_META);
   }
 
@@ -482,6 +519,7 @@
 
   populatePresets();
   applyPreset("6h");
+  applyTabStyles();
 
   presetEl.addEventListener("change", function () {
     customMsgEl().textContent = "";
