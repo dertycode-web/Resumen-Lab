@@ -273,6 +273,17 @@
     return root.getAttribute("data-theme") === "dark";
   }
 
+  function fmtDuration(hours) {
+    if (typeof hours !== "number" || isNaN(hours)) return "";
+    var totalMin = Math.round(hours * 60);
+    var d = Math.floor(totalMin / (24 * 60));
+    var h = Math.floor((totalMin % (24 * 60)) / 60);
+    var m = totalMin % 60;
+    if (d > 0) return d + "d " + h + "h";
+    if (h > 0) return h + "h " + m + "m";
+    return m + "m";
+  }
+
   function populatePresets() {
     presetEl.innerHTML = "";
     PRESETS.forEach(function (p) {
@@ -297,7 +308,7 @@
         var originMs = (typeof m.firstSeen === "number") ? m.firstSeen : m.timestamp;
         var ageHours = (nowMs - originMs) / 3600000;
         var key = m.category + (ageHours >= 5 ? "EnCurso" : "Nuevo");
-        buckets[key].push({ subject: m.subject, ageHours: ageHours });
+        buckets[key].push({ subject: m.subject, ageHours: ageHours, originMs: originMs });
       } else if (m.category === "tareas") {
         buckets.tareas.push({ subject: m.subject });
       } else if (m.category === "pedidosReferentes") {
@@ -356,10 +367,24 @@
           var row = document.createElement("div");
           row.className = "rl-row";
           var resolved = item.resolved === true;
-          row.style.cssText = "font-size:12px;line-height:1.4;padding:5px 4px;border-radius:6px;color:" + (resolved ? "var(--text-muted)" : "var(--text-primary)") + ";" + (resolved ? "text-decoration:line-through;text-decoration-color:var(--text-muted);" : "");
-          var age = typeof item.ageHours === "number" ? "<span style='color:var(--text-muted);font-weight:500;'> · " + item.ageHours.toFixed(1) + "h</span>" : "";
+          var hasOrigin = typeof item.originMs === "number";
+          row.style.cssText = "font-size:12px;line-height:1.4;padding:5px 4px;border-radius:6px;color:" + (resolved ? "var(--text-muted)" : "var(--text-primary)") + ";" + (resolved ? "text-decoration:line-through;text-decoration-color:var(--text-muted);" : "") + (hasOrigin ? "cursor:pointer;" : "");
+          var age = typeof item.ageHours === "number" ? "<span style='color:var(--text-muted);font-weight:500;'> · " + fmtDuration(item.ageHours) + (hasOrigin ? " ▾" : "") + "</span>" : "";
           var check = resolved ? "<span style='text-decoration:none;color:#1f9d63;font-weight:700;'>✓ </span>" : "";
-          row.innerHTML = check + "- " + (item.subject || "(sin asunto)") + age;
+          var mainLine = document.createElement("div");
+          mainLine.innerHTML = check + "- " + (item.subject || "(sin asunto)") + age;
+          row.appendChild(mainLine);
+
+          if (hasOrigin) {
+            var detail = document.createElement("div");
+            detail.style.cssText = "display:none;font-size:11px;color:var(--text-muted);margin-top:3px;padding-left:2px;";
+            detail.textContent = "Comenzó: " + fmt(item.originMs);
+            row.appendChild(detail);
+            row.addEventListener("click", function () {
+              detail.style.display = detail.style.display === "none" ? "block" : "none";
+            });
+          }
+
           list.appendChild(row);
         });
         card.appendChild(list);
