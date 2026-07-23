@@ -426,37 +426,52 @@ def main():
                         record["resolved"] = result["resolved"]
                     mails_by_id[record_id] = record
 
+            skipped_due_to_error = False
             for uid in uids:
-                msg = fetch_message(imap, uid)
-                if msg is None:
+                try:
+                    msg = fetch_message(imap, uid)
+                    if msg is None:
+                        continue
+                    own_ms = epoch_ms_from_date_header(msg)
+                    if own_ms is None or own_ms < search_window_start or own_ms > now_ms + 5 * 60 * 1000:
+                        continue
+                    uid_str = uid.decode() if isinstance(uid, bytes) else uid
+
+                    result = classify(imap, uid, msg)
+                    if result is not None:
+                        thrid = result.pop("thread_id", None)
+                        record_id = thrid or f"uid-{uid_str}"
+                        merge_result(record_id, result, own_ms)
+                        new_or_updated += 1
+
+                    # Solapa "Escalamientos IT": independiente de la clasificacion
+                    # principal, por eso usa su propio namespace de id (sufijo ':escIT')
+                    subject = decode_mime_header(msg.get("Subject")) or ""
+                    to_text = addr_list_text(msg, "To").lower()
+                    cc_text = addr_list_text(msg, "Cc").lower()
+                    recipients_text = to_text + " " + cc_text
+                    body = get_body_text(msg)
+                    esc_result = classify_escalamientos_it(imap, uid, subject, body, recipients_text, own_ms)
+                    if esc_result is not None:
+                        thrid = esc_result.pop("thread_id", None)
+                        esc_record_id = (thrid or f"uid-{uid_str}") + ":escIT"
+                        merge_result(esc_record_id, esc_result, own_ms)
+                        new_or_updated += 1
+                except Exception as e:
+                    # Un mail puntual que falla (ej. timeout de red en ESE fetch)
+                    # no debe tirar abajo el resto de la corrida: se saltea y
+                    # se reintenta en la proxima corrida (no se avanza el
+                    # checkpoint mas alla de este punto, ver mas abajo).
+                    skipped_due_to_error = True
+                    log(f"[uid={uid}] error procesando, se saltea: {type(e).__name__}: {e}")
                     continue
-                own_ms = epoch_ms_from_date_header(msg)
-                if own_ms is None or own_ms < search_window_start or own_ms > now_ms + 5 * 60 * 1000:
-                    continue
-                uid_str = uid.decode() if isinstance(uid, bytes) else uid
 
-                result = classify(imap, uid, msg)
-                if result is not None:
-                    thrid = result.pop("thread_id", None)
-                    record_id = thrid or f"uid-{uid_str}"
-                    merge_result(record_id, result, own_ms)
-                    new_or_updated += 1
-
-                # Solapa "Escalamientos IT": independiente de la clasificacion
-                # principal, por eso usa su propio namespace de id (sufijo ':escIT')
-                subject = decode_mime_header(msg.get("Subject")) or ""
-                to_text = addr_list_text(msg, "To").lower()
-                cc_text = addr_list_text(msg, "Cc").lower()
-                recipients_text = to_text + " " + cc_text
-                body = get_body_text(msg)
-                esc_result = classify_escalamientos_it(imap, uid, subject, body, recipients_text, own_ms)
-                if esc_result is not None:
-                    thrid = esc_result.pop("thread_id", None)
-                    esc_record_id = (thrid or f"uid-{uid_str}") + ":escIT"
-                    merge_result(esc_record_id, esc_result, own_ms)
-                    new_or_updated += 1
-
+            # Guarda lo que se pudo procesar aunque algun mail individual haya
+            # fallado — antes, cualquier error a mitad de la corrida perdia
+            # TODO lo que se habia clasificado hasta ese momento.
             data["mails"] = list(mails_by_id.values())
+            if skipped_due_to_error:
+                error_msg = "Algunos mails no se pudieron procesar (timeouts); se reintentan en la proxima corrida"
             imap.logout()
         except Exception as e:
             error_msg = f"{type(e).__name__}: {e}"
@@ -465,10 +480,16 @@ def main():
     data["mails"] = prune_mails(data["mails"], now_ms)
     data["mails"].sort(key=lambda m: m.get("timestamp", 0), reverse=True)
 
+    # Si hubo error, NO avanzamos "rangeTo" a ahora: dejamos el checkpoint
+    # anterior para que la proxima corrida vuelva a intentar la misma ventana
+    # (acotada igual por MAX_LOOKBACK_MS). Si avanzabamos el checkpoint pese
+    # al error, los mails que quedaron sin procesar por el corte se saltaban
+    # para siempre.
+    new_range_to = now_ms if error_msg is None else range_from
     data["lastRun"] = {
         "timestamp": now_ms,
         "rangeFrom": range_from,
-        "rangeTo": now_ms,
+        "rangeTo": new_range_to,
         "error": error_msg,
     }
 
