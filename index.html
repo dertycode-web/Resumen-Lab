@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<script type="application/json" id="cowork-artifact-meta">
+{
+  "name": "Resumen Lab",
+  "schemaVersion": 1,
+  "description": "Resumen periódico de escalamientos de Reportes Técnica / Afectación Masiva, leído desde los mails reenviados a la casilla de Gmail. Se actualiza cada corrida (06/12/18/00hs) y guarda historial de corridas anteriores."
+}
+</script>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  :root{
+    color-scheme: light;
+    --bg-top: #f7f7fb;
+    --bg-bottom: #ffffff;
+    --text-primary: #1b1b1f;
+    --text-secondary: #7a7a85;
+    --text-muted: #a3a3ad;
+    --text-title: #2b2b31;
+    --card-bg: #ffffff;
+    --card-border: #ececf3;
+    --panel-bg: #fbfbfe;
+    --panel-border: #ecebf5;
+    --input-bg: #ffffff;
+    --input-border: #e2e2ea;
+    --input-text: #33333a;
+    --label-color: #8a8a95;
+    --accent: #6a5cf5;
+    --accent-bg: #f0eefe;
+    --accent-border: #d8d4fb;
+    --row-hover: #fafafe;
+    --divider: #f3f3f7;
+    --scrollbar-thumb: #dcdce6;
+    --shadow-soft: 0 1px 2px rgba(20,20,43,0.04);
+    --shadow-card-hover: 0 4px 14px rgba(20,20,43,0.07);
+    --toggle-bg: #ffffff;
+    --toggle-border: #e2e2ea;
+  }
+  html[data-theme="dark"]{
+    color-scheme: dark;
+    --bg-top: #17171d;
+    --bg-bottom: #101014;
+    --text-primary: #eceef2;
+    --text-secondary: #9a9aa6;
+    --text-muted: #74747f;
+    --text-title: #f0f1f4;
+    --card-bg: #1c1c23;
+    --card-border: #2b2b34;
+    --panel-bg: #1c1c23;
+    --panel-border: #2b2b34;
+    --input-bg: #232329;
+    --input-border: #34343d;
+    --input-text: #e4e4e9;
+    --label-color: #8c8c97;
+    --accent: #a49bff;
+    --accent-bg: #2a2740;
+    --accent-border: #423a72;
+    --row-hover: #232330;
+    --divider: #2a2a33;
+    --scrollbar-thumb: #34343e;
+    --shadow-soft: 0 1px 2px rgba(0,0,0,0.3);
+    --shadow-card-hover: 0 4px 16px rgba(0,0,0,0.35);
+    --toggle-bg: #232329;
+    --toggle-border: #34343d;
+  }
+  * { box-sizing: border-box; }
+  body { -webkit-font-smoothing: antialiased; }
+  body, .rl-card, #runPicker, #customFrom, #customTo, #customBtn, #themeToggle {
+    transition: background-color .18s ease, border-color .18s ease, color .18s ease, box-shadow .18s ease;
+  }
+  #runPicker:focus, #customFrom:focus, #customTo:focus, #customBtn:focus, #themeToggle:focus { outline: 2px solid var(--accent-border); outline-offset: 1px; }
+  #customBtn:hover { background: var(--accent-bg) !important; border-color: var(--accent) !important; }
+  #themeToggle:hover { border-color: var(--accent) !important; }
+  .rl-card:hover { box-shadow: var(--shadow-card-hover); }
+  .rl-row:hover { background: var(--row-hover); }
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
+  input[type="datetime-local"]::-webkit-calendar-picker-indicator { filter: var(--dtp-filter, none); cursor: pointer; }
+  html[data-theme="dark"] input[type="datetime-local"]::-webkit-calendar-picker-indicator { filter: invert(0.8); }
+</style>
+</head>
+<body style="margin:0;padding:28px 16px 40px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Arial,sans-serif;background:linear-gradient(180deg,var(--bg-top) 0%,var(--bg-bottom) 220px);color:var(--text-primary);">
+
+<div style="max-width:760px;margin:0 auto;">
+
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:18px;">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <div style="width:40px;height:40px;border-radius:11px;background:linear-gradient(135deg,#6a5cf5,#8f7ffb);display:flex;align-items:center;justify-content:center;font-size:18px;box-shadow:0 3px 10px rgba(106,92,245,0.28);flex-shrink:0;">🧪</div>
+      <div>
+        <h1 style="font-size:21px;font-weight:600;margin:0;letter-spacing:-0.2px;color:var(--text-title);">Resumen LAB</h1>
+        <div id="rangeLine" style="font-size:12.5px;color:var(--text-secondary);margin-top:2px;"></div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <button id="themeToggle" title="Cambiar tema" style="width:36px;height:36px;border-radius:9px;border:1px solid var(--toggle-border);background:var(--toggle-bg);cursor:pointer;font-size:15px;display:flex;align-items:center;justify-content:center;box-shadow:var(--shadow-soft);flex-shrink:0;">🌙</button>
+      <select id="runPicker" style="height:36px;border:1px solid var(--input-border);border-radius:9px;padding:0 10px;font-size:12.5px;background:var(--input-bg);color:var(--input-text);box-shadow:var(--shadow-soft);cursor:pointer;"></select>
+    </div>
+  </div>
+
+  <div style="border:1px solid var(--panel-border);border-radius:14px;padding:14px 16px;margin-bottom:20px;background:var(--panel-bg);box-shadow:var(--shadow-soft);">
+    <div style="font-size:12.5px;font-weight:600;margin-bottom:10px;color:var(--text-title);display:flex;align-items:center;gap:6px;">
+      <span style="font-size:13px;">🗓️</span> Pedir resumen de un rango puntual
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+      <label style="display:flex;flex-direction:column;gap:3px;font-size:11px;color:var(--label-color);font-weight:500;">
+        Desde
+        <input type="datetime-local" id="customFrom" style="height:33px;border:1px solid var(--input-border);border-radius:7px;padding:0 8px;font-size:12px;color:var(--input-text);background:var(--input-bg);">
+      </label>
+      <label style="display:flex;flex-direction:column;gap:3px;font-size:11px;color:var(--label-color);font-weight:500;">
+        Hasta
+        <input type="datetime-local" id="customTo" style="height:33px;border:1px solid var(--input-border);border-radius:7px;padding:0 8px;font-size:12px;color:var(--input-text);background:var(--input-bg);">
+      </label>
+      <button id="customBtn" style="height:33px;border:1px solid var(--accent-border);border-radius:7px;padding:0 14px;font-size:12.5px;font-weight:600;background:var(--input-bg);color:var(--accent);cursor:pointer;">Generar resumen ↗</button>
+    </div>
+    <div id="customMsg" style="font-size:11px;color:var(--text-muted);margin-top:7px;"></div>
+  </div>
+
+  <div id="cards" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"></div>
+
+  <p style="font-size:11.5px;color:var(--text-muted);margin-top:24px;text-align:center;line-height:1.5;">
+    Se actualiza automáticamente cada corrida (06:00 · 12:00 · 18:00 · 00:00)<br>
+    Fuente: mails reenviados desde lautaro.rojas@claro.com.ar a esta casilla de Gmail.
+  </p>
+</div>
+
+<script id="resumen-data" type="application/json">
+{
+  "runs": [
+    {
+      "timestamp": 1784810623000,
+      "rangeFrom": 1784789023000,
+      "rangeTo": 1784810623000,
+      "buckets": {
+        "afectacionMasiva": [],
+        "itNuevo": [],
+        "itEnCurso": [],
+        "ingenieriaNuevo": [],
+        "ingenieriaEnCurso": [],
+        "antiguedadSinConfirmar": [],
+        "tareas": [
+          { "subject": "Reprogramación Ventana Trabajo || SERVICIOS MASIVOS - Argentina || CONFIGURACION DWDM || 2026-07-28 00:00Hs GMT-3" }
+        ],
+        "pedidosReferentes": []
+      }
+    }
+  ]
+}
+</script>
+
+<script>
+(function () {
+  // ---- Theme handling ----
+  var THEME_KEY = "resumenLabTheme";
+  var root = document.documentElement;
+  var themeToggle = document.getElementById("themeToggle");
+
+  function applyTheme(theme) {
+    if (theme === "dark") {
+      root.setAttribute("data-theme", "dark");
+      themeToggle.textContent = "☀️";
+    } else {
+      root.removeAttribute("data-theme");
+      themeToggle.textContent = "🌙";
+    }
+  }
+
+  function getInitialTheme() {
+    try {
+      var saved = localStorage.getItem(THEME_KEY);
+      if (saved === "dark" || saved === "light") return saved;
+    } catch (e) {}
+    return (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+  }
+
+  var currentTheme = getInitialTheme();
+  applyTheme(currentTheme);
+
+  themeToggle.addEventListener("click", function () {
+    currentTheme = currentTheme === "dark" ? "light" : "dark";
+    applyTheme(currentTheme);
+    try { localStorage.setItem(THEME_KEY, currentTheme); } catch (e) {}
+  });
+
+  // ---- Data rendering ----
+  var dataEl = document.getElementById("resumen-data");
+  var data = JSON.parse(dataEl.textContent || '{"runs":[]}');
+  var runs = data.runs || [];
+
+  var CATEGORY_META = [
+    { key: "afectacionMasiva", label: "Afectaciones masivas", icon: "🚨", rgb: "216,71,47" },
+    { key: "itNuevo", label: "Escalamientos nuevos · IT", icon: "🆕", rgb: "44,123,229" },
+    { key: "itEnCurso", label: "Escalamientos en curso · IT", icon: "🔄", rgb: "44,123,229" },
+    { key: "ingenieriaNuevo", label: "Escalamientos nuevos · Ingeniería", icon: "🆕", rgb: "76,139,43" },
+    { key: "ingenieriaEnCurso", label: "Escalamientos en curso · Ingeniería", icon: "🔄", rgb: "76,139,43" },
+    { key: "antiguedadSinConfirmar", label: "Antigüedad sin confirmar", icon: "❓", rgb: "180,114,15" },
+    { key: "tareas", label: "Tareas (WBS)", icon: "📋", rgb: "106,92,245" },
+    { key: "pedidosReferentes", label: "Pedidos Referentes", icon: "📨", rgb: "24,138,102" }
+  ];
+
+  var picker = document.getElementById("runPicker");
+  var rangeLine = document.getElementById("rangeLine");
+  var cardsEl = document.getElementById("cards");
+
+  function fmt(ts) {
+    if (!ts) return "";
+    var d = new Date(ts);
+    return d.toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  }
+
+  function isDark() {
+    return root.getAttribute("data-theme") === "dark";
+  }
+
+  function populatePicker() {
+    picker.innerHTML = "";
+    if (!runs.length) {
+      var opt = document.createElement("option");
+      opt.textContent = "Sin corridas todavía";
+      picker.appendChild(opt);
+      return;
+    }
+    runs.forEach(function (run, i) {
+      var opt = document.createElement("option");
+      opt.value = i;
+      opt.textContent = fmt(run.timestamp);
+      picker.appendChild(opt);
+    });
+  }
+
+  function renderRun(run) {
+    cardsEl.innerHTML = "";
+    if (!run) {
+      rangeLine.textContent = "Todavía no se generó ningún resumen.";
+      return;
+    }
+    rangeLine.textContent = "Última lectura " + fmt(run.timestamp) +
+      (run.rangeFrom ? "  ·  rango " + fmt(run.rangeFrom) + " → " + fmt(run.rangeTo) : "");
+
+    var dark = isDark();
+
+    if (run.error) {
+      var errBox = document.createElement("div");
+      errBox.style.cssText = "grid-column:1 / -1;border:1px solid " + (dark ? "#5c3630" : "#f3c9c2") + ";background:" + (dark ? "#2c1c1a" : "#fdf1ef") + ";border-radius:12px;padding:12px 14px;font-size:12.5px;color:" + (dark ? "#f0a598" : "#a83b2a") + ";display:flex;gap:8px;align-items:flex-start;";
+      errBox.innerHTML = "<span>⚠️</span><span>Error en la corrida: " + run.error + "</span>";
+      cardsEl.appendChild(errBox);
+    }
+
+    CATEGORY_META.forEach(function (meta) {
+      var items = (run.buckets && run.buckets[meta.key]) || [];
+      var hasItems = items.length > 0;
+      var accentColor = dark ? "rgba(" + meta.rgb + ",0.95)" : "rgb(" + meta.rgb + ")";
+      var softBg = dark ? "rgba(" + meta.rgb + ",0.22)" : "rgba(" + meta.rgb + ",0.12)";
+
+      var card = document.createElement("div");
+      card.className = "rl-card";
+      card.style.cssText = "border:1px solid var(--card-border);border-radius:13px;padding:12px 14px 13px;background:var(--card-bg);box-shadow:var(--shadow-soft);display:flex;flex-direction:column;";
+
+      var head = document.createElement("div");
+      head.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:8px;" + (hasItems ? "margin-bottom:8px;" : "");
+
+      var titleWrap = document.createElement("div");
+      titleWrap.style.cssText = "display:flex;align-items:center;gap:7px;min-width:0;";
+
+      var iconEl = document.createElement("span");
+      iconEl.style.cssText = "width:22px;height:22px;border-radius:6px;background:" + softBg + ";display:flex;align-items:center;justify-content:center;font-size:11.5px;flex-shrink:0;";
+      iconEl.textContent = meta.icon;
+
+      var titleEl = document.createElement("span");
+      titleEl.style.cssText = "font-size:12.5px;font-weight:600;color:var(--text-title);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
+      titleEl.textContent = meta.label;
+
+      titleWrap.appendChild(iconEl);
+      titleWrap.appendChild(titleEl);
+
+      var badge = document.createElement("span");
+      badge.style.cssText = "font-size:11px;font-weight:700;color:" + (hasItems ? "#fff" : accentColor) + ";background:" + (hasItems ? accentColor : softBg) + ";border-radius:999px;padding:2px 8px;flex-shrink:0;";
+      badge.textContent = items.length;
+
+      head.appendChild(titleWrap);
+      head.appendChild(badge);
+      card.appendChild(head);
+
+      if (hasItems) {
+        var list = document.createElement("div");
+        list.style.cssText = "max-height:140px;overflow-y:auto;border-top:1px solid var(--divider);margin-top:2px;padding-top:6px;";
+        items.forEach(function (item) {
+          var row = document.createElement("div");
+          row.className = "rl-row";
+          var resolved = item.resolved === true;
+          row.style.cssText = "font-size:12px;line-height:1.4;padding:5px 4px;border-radius:6px;color:" + (resolved ? "var(--text-muted)" : "var(--text-primary)") + ";" + (resolved ? "text-decoration:line-through;text-decoration-color:var(--text-muted);" : "");
+          var age = typeof item.ageHours === "number" ? "<span style='color:var(--text-muted);font-weight:500;'> · " + item.ageHours.toFixed(1) + "h</span>" : "";
+          var check = resolved ? "<span style='text-decoration:none;color:#1f9d63;font-weight:700;'>✓ </span>" : "";
+          row.innerHTML = check + "- " + (item.subject || "(sin asunto)") + age;
+          list.appendChild(row);
+        });
+        card.appendChild(list);
+      } else {
+        var empty = document.createElement("div");
+        empty.style.cssText = "font-size:11.5px;color:var(--text-muted);font-style:italic;";
+        empty.textContent = "Sin novedades";
+        card.appendChild(empty);
+      }
+
+      cardsEl.appendChild(card);
+    });
+  }
+
+  populatePicker();
+  renderRun(runs[0]);
+
+  picker.addEventListener("change", function () {
+    renderRun(runs[picker.value]);
+  });
+
+  themeToggle.addEventListener("click", function () {
+    // re-render so category colors adapt to the new theme
+    renderRun(runs[picker.value || 0]);
+  });
+
+  var customBtn = document.getElementById("customBtn");
+  var customMsg = document.getElementById("customMsg");
+  customBtn.addEventListener("click", function () {
+    var fromVal = document.getElementById("customFrom").value;
+    var toVal = document.getElementById("customTo").value;
+    if (!fromVal || !toVal) {
+      customMsg.textContent = "Completá Desde y Hasta.";
+      return;
+    }
+    var fromNice = new Date(fromVal).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+    var toNice = new Date(toVal).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+    if (typeof sendPrompt === "function") {
+      customMsg.textContent = "Pedido enviado al chat...";
+      sendPrompt("Generá el Resumen LAB para el rango del " + fromNice + " al " + toNice + " y actualizá el artifact.");
+    } else {
+      customMsg.textContent = "Esta función solo está disponible dentro de Cowork.";
+    }
+  });
+})();
+</script>
+
+</body>
+</html>
