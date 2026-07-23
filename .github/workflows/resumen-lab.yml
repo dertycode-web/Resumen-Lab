@@ -1,0 +1,38 @@
+name: Resumen LAB - actualizar mails
+
+on:
+  schedule:
+    # 05:00, 09:05, 15:05, 21:05 UTC == 02:00/06:00/12:00/18:00 hora Argentina (UTC-3)
+    - cron: '5 3,9,15,21 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Correr script de Resumen LAB
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: python scripts/resumen_lab.py
+
+      - name: Commit y push si hubo cambios
+        run: |
+          git config user.name "resumen-lab-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add index.html
+          if git diff --cached --quiet; then
+            echo "Sin cambios para commitear."
+          else
+            git commit -m "Corrida automática $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git push
+          fi
