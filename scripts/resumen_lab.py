@@ -200,6 +200,37 @@ def thread_is_resolved(imap, thrid_hex):
     return False
 
 
+MESES_ES = {
+    "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
+    "julio": 7, "agosto": 8, "septiembre": 9, "setiembre": 9, "octubre": 10,
+    "noviembre": 11, "diciembre": 12,
+}
+# Matchea las lineas de cita tipo Outlook: "Enviado: lunes, 20 de julio de 2026 13:44"
+QUOTED_DATE_RE = re.compile(
+    r"Enviado:\s*(?:[A-Za-zñÑáéíóúÁÉÍÓÚ]+,?\s*)?(\d{1,2})\s+de\s+([A-Za-zñÑáéíóúÁÉÍÓÚ]+)\s+de\s+(\d{4})\s+(\d{1,2}):(\d{2})",
+    re.IGNORECASE,
+)
+ARG_UTC_OFFSET_MS = 3 * 3600 * 1000  # Argentina es UTC-3, sin horario de verano
+
+
+def earliest_quoted_date_ms(body):
+    """Busca fechas de mensajes citados (encabezados 'Enviado: ...' que Outlook
+    agrega al citar respuestas previas) y devuelve la mas antigua encontrada,
+    en ms epoch UTC. Sirve para detectar que una cadena viene de mas atras
+    aunque el reenvio a esta casilla haya arrancado recien con el ultimo mail."""
+    found = []
+    for day, mes_name, year, hour, minute in QUOTED_DATE_RE.findall(body):
+        mes = MESES_ES.get(mes_name.lower())
+        if not mes:
+            continue
+        try:
+            dt = datetime(int(year), mes, int(day), int(hour), int(minute), tzinfo=timezone.utc)
+            found.append(int(dt.timestamp() * 1000) + ARG_UTC_OFFSET_MS)
+        except ValueError:
+            continue
+    return min(found) if found else None
+
+
 def classify(imap, uid, msg):
     subject = decode_mime_header(msg.get("Subject")) or ""
     sender_raw = decode_mime_header(msg.get("From")) or ""
@@ -241,13 +272,21 @@ def classify(imap, uid, msg):
         )
         if matched_it:
             thrid = gm_thread_id_hex(imap, uid)
-            ts = thread_first_message_ms(imap, thrid, own_ms) if thrid else own_ms
+            if thrid:
+                ts = thread_first_message_ms(imap, thrid, own_ms)
+            else:
+                quoted_ms = earliest_quoted_date_ms(body)
+                ts = min(own_ms, quoted_ms) if quoted_ms else own_ms
             return {"category": "it", "timestamp": ts, "subject": subject, "thread_id": thrid}
 
         matched_ing = any(re.search(r"\b" + re.escape(k) + r"\b", recipients_text) for k in ING_RECIPIENT_KEYWORDS)
         if matched_ing:
             thrid = gm_thread_id_hex(imap, uid)
-            ts = thread_first_message_ms(imap, thrid, own_ms) if thrid else own_ms
+            if thrid:
+                ts = thread_first_message_ms(imap, thrid, own_ms)
+            else:
+                quoted_ms = earliest_quoted_date_ms(body)
+                ts = min(own_ms, quoted_ms) if quoted_ms else own_ms
             return {"category": "ingenieria", "timestamp": ts, "subject": subject, "thread_id": thrid}
 
         # 5. Informes (subject-based, sender is reportestecnica in practice)
