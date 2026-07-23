@@ -386,8 +386,13 @@ def main():
     last_run = data.get("lastRun") or {}
     range_from = last_run.get("rangeTo") or (now_ms - 6 * 3600 * 1000)
     # ventana de búsqueda: un poco más ancha que el "rangeFrom" real para no
-    # perder mails por desfasajes de reloj; el filtro fino es por fecha real.
-    search_window_start = min(range_from, now_ms - 6 * 3600 * 1000)
+    # perder mails por desfasajes de reloj o corridas salteadas; el filtro
+    # fino es por fecha real. Antes el piso era de 6hs fijas, lo que obligaba
+    # a re-descargar y re-clasificar decenas de mails ya conocidos en CADA
+    # corrida (con las corridas cada 5 min esto hacia que el script tardara
+    # varios minutos y se colgara). Con 45 min alcanza de sobra como colchon.
+    MIN_LOOKBACK_MS = 45 * 60 * 1000
+    search_window_start = min(range_from, now_ms - MIN_LOOKBACK_MS)
 
     error_msg = None
     new_or_updated = 0
@@ -401,7 +406,11 @@ def main():
             imap.login(gmail_user, gmail_pass)
             imap.select("INBOX")
 
-            since_date = (datetime.now(timezone.utc) - timedelta(days=2)).strftime("%d-%b-%Y")
+            # IMAP SINCE solo filtra por fecha (sin hora), asi que restamos 1 dia
+            # de colchon sobre el inicio real de la ventana para no perder nada
+            # por husos horarios, sin volver a bajar 2 dias enteros cada vez.
+            since_dt = datetime.fromtimestamp(search_window_start / 1000, tz=timezone.utc) - timedelta(days=1)
+            since_date = since_dt.strftime("%d-%b-%Y")
             typ, data_uids = imap.uid("search", None, f'(SINCE {since_date})')
             uids = data_uids[0].split() if typ == "OK" and data_uids and data_uids[0] else []
             log(f"Candidatos encontrados (SINCE {since_date}): {len(uids)}")
