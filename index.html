@@ -123,10 +123,16 @@
     <div id="customMsg" style="font-size:11px;color:var(--text-muted);margin-top:7px;"></div>
   </div>
 
+  <div id="tabBar" style="display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid var(--panel-border);">
+    <button class="rl-tab" data-tab="resumen" style="border:none;background:none;padding:8px 4px;margin-right:10px;font-size:13px;font-weight:600;cursor:pointer;color:var(--text-secondary);border-bottom:2px solid transparent;">Resumen</button>
+    <button class="rl-tab" data-tab="escalamientosIT" style="border:none;background:none;padding:8px 4px;margin-right:10px;font-size:13px;font-weight:600;cursor:pointer;color:var(--text-secondary);border-bottom:2px solid transparent;">Escalamientos IT</button>
+  </div>
+
   <div id="cards" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"></div>
+  <div id="cardsEscIT" style="display:none;grid-template-columns:1fr 1fr;gap:12px;"></div>
 
   <p style="font-size:11.5px;color:var(--text-muted);margin-top:24px;text-align:center;line-height:1.5;">
-    Se relee la bandeja cada 6 horas (06:00 · 12:00 · 18:00 · 00:00) y cada mail queda guardado con su fecha real.<br>
+    Se relee la bandeja cada 5 minutos y cada mail queda guardado con su fecha real.<br>
     Fuente: mails reenviados desde lautaro.rojas@claro.com.ar a esta casilla de Gmail.
   </p>
 </div>
@@ -248,12 +254,17 @@
     { key: "itEnCurso", label: "Escalamientos en curso · IT", icon: "🔄", rgb: "44,123,229" },
     { key: "ingenieriaNuevo", label: "Escalamientos nuevos · Ingeniería", icon: "🆕", rgb: "76,139,43" },
     { key: "ingenieriaEnCurso", label: "Escalamientos en curso · Ingeniería", icon: "🔄", rgb: "76,139,43" },
-    { key: "escalamientosITNuevo", label: "Escalamientos IT · Nuevo", icon: "🚦", rgb: "214,127,17" },
-    { key: "escalamientosITEnCurso", label: "Escalamientos IT · En curso", icon: "🔥", rgb: "214,127,17" },
     { key: "pedidosReferentes", label: "Mail de Referente", icon: "📨", rgb: "24,138,102" },
     { key: "tareas", label: "Tareas (WBS)", icon: "📋", rgb: "106,92,245" },
     { key: "informesFija", label: "Informes de Fija", icon: "☎️", rgb: "13,120,140" },
     { key: "informesMovil", label: "Informes de Móvil", icon: "📱", rgb: "163,86,196" }
+  ];
+
+  // Solapa aparte "Escalamientos IT": cualquier mail (de cualquier remitente)
+  // enviado a Gestion de Incidentes / Help Desk / Help Desk Billetera.
+  var ESCALAMIENTOS_IT_META = [
+    { key: "escalamientosITNuevo", label: "Escalamientos IT · Nuevo", icon: "🚦", rgb: "214,127,17" },
+    { key: "escalamientosITEnCurso", label: "Escalamientos IT · En curso", icon: "🔥", rgb: "214,127,17" }
   ];
 
   var PRESETS = [
@@ -268,6 +279,27 @@
   var presetEl = document.getElementById("rangePreset");
   var rangeLine = document.getElementById("rangeLine");
   var cardsEl = document.getElementById("cards");
+  var cardsEscITEl = document.getElementById("cardsEscIT");
+  var tabButtons = document.querySelectorAll(".rl-tab");
+  var currentTab = "resumen";
+
+  function applyTabStyles() {
+    tabButtons.forEach(function (btn) {
+      var active = btn.getAttribute("data-tab") === currentTab;
+      btn.style.color = active ? "var(--accent)" : "var(--text-secondary)";
+      btn.style.borderBottomColor = active ? "var(--accent)" : "transparent";
+    });
+    cardsEl.style.display = currentTab === "resumen" ? "grid" : "none";
+    cardsEscITEl.style.display = currentTab === "escalamientosIT" ? "grid" : "none";
+  }
+
+  tabButtons.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      currentTab = btn.getAttribute("data-tab");
+      applyTabStyles();
+    });
+  });
+  applyTabStyles();
 
   var currentRange = null; // { fromMs, toMs, label, mailCount }
 
@@ -306,6 +338,7 @@
     var nowMs = Date.now();
     var buckets = {};
     CATEGORY_META.forEach(function (m) { buckets[m.key] = []; });
+    ESCALAMIENTOS_IT_META.forEach(function (m) { buckets[m.key] = []; });
 
     var sorted = mailsInRange.slice().sort(function (a, b) { return b.timestamp - a.timestamp; });
 
@@ -336,9 +369,9 @@
     return buckets;
   }
 
-  function renderCards(buckets, dark) {
-    cardsEl.innerHTML = "";
-    CATEGORY_META.forEach(function (meta) {
+  function renderCards(buckets, dark, targetEl, metaList) {
+    targetEl.innerHTML = "";
+    metaList.forEach(function (meta) {
       var items = (buckets && buckets[meta.key]) || [];
       var hasItems = items.length > 0;
       var accentColor = dark ? "rgba(" + meta.rgb + ",0.95)" : "rgb(" + meta.rgb + ")";
@@ -408,7 +441,7 @@
         card.appendChild(empty);
       }
 
-      cardsEl.appendChild(card);
+      targetEl.appendChild(card);
     });
   }
 
@@ -421,7 +454,9 @@
       "  ·  " + filtered.length + (filtered.length === 1 ? " mail" : " mails") +
       (lastRun ? "  ·  última lectura de bandeja " + fmt(lastRun.timestamp) : "");
 
-    renderCards(buildBuckets(filtered), dark);
+    var buckets = buildBuckets(filtered);
+    renderCards(buckets, dark, cardsEl, CATEGORY_META);
+    renderCards(buckets, dark, cardsEscITEl, ESCALAMIENTOS_IT_META);
   }
 
   function applyPreset(key) {
