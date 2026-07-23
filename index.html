@@ -98,6 +98,7 @@
         <h1 style="font-size:28px;font-weight:600;margin:0;letter-spacing:-0.2px;color:var(--text-title);">Resumen LAB</h1>
         <div id="rangeLine" style="font-size:15px;color:var(--text-secondary);margin-top:4px;"></div>
         <div id="rangeLineEscIT" style="display:none;font-size:15px;color:var(--text-secondary);margin-top:4px;"></div>
+        <div id="rangeLineLapso" style="display:none;font-size:15px;color:var(--text-secondary);margin-top:4px;"></div>
       </div>
     </div>
     <div id="rangeControls" style="display:flex;align-items:center;gap:10px;">
@@ -106,7 +107,13 @@
     </div>
   </div>
 
-  <div id="rangePanel" style="border:1px solid var(--panel-border);border-radius:16px;padding:18px 22px;margin-bottom:26px;background:var(--panel-bg);box-shadow:var(--shadow-soft);">
+  <div id="tabBar" style="display:flex;gap:8px;margin-bottom:18px;border-bottom:1px solid var(--panel-border);">
+    <button class="rl-tab" data-tab="resumen" style="border:none;background:none;padding:10px 6px;margin-right:14px;font-size:15.5px;font-weight:600;cursor:pointer;color:var(--text-secondary);border-bottom:3px solid transparent;">Resumen</button>
+    <button class="rl-tab" data-tab="escalamientosIT" style="border:none;background:none;padding:10px 6px;margin-right:14px;font-size:15.5px;font-weight:600;cursor:pointer;color:var(--text-secondary);border-bottom:3px solid transparent;">Escalamientos IT</button>
+    <button class="rl-tab" data-tab="lapso" style="border:none;background:none;padding:10px 6px;margin-right:14px;font-size:15.5px;font-weight:600;cursor:pointer;color:var(--text-secondary);border-bottom:3px solid transparent;">Resumen por lapso</button>
+  </div>
+
+  <div id="rangePanel" style="display:none;border:1px solid var(--panel-border);border-radius:16px;padding:18px 22px;margin-bottom:26px;background:var(--panel-bg);box-shadow:var(--shadow-soft);">
     <div style="font-size:14.5px;font-weight:600;margin-bottom:13px;color:var(--text-title);display:flex;align-items:center;gap:7px;">
       <span style="font-size:15px;">🗓️</span> Pedir resumen de un rango puntual
     </div>
@@ -124,13 +131,9 @@
     <div id="customMsg" style="font-size:13px;color:var(--text-muted);margin-top:9px;"></div>
   </div>
 
-  <div id="tabBar" style="display:flex;gap:8px;margin-bottom:18px;border-bottom:1px solid var(--panel-border);">
-    <button class="rl-tab" data-tab="resumen" style="border:none;background:none;padding:10px 6px;margin-right:14px;font-size:15.5px;font-weight:600;cursor:pointer;color:var(--text-secondary);border-bottom:3px solid transparent;">Resumen</button>
-    <button class="rl-tab" data-tab="escalamientosIT" style="border:none;background:none;padding:10px 6px;margin-right:14px;font-size:15.5px;font-weight:600;cursor:pointer;color:var(--text-secondary);border-bottom:3px solid transparent;">Escalamientos IT</button>
-  </div>
-
   <div id="cards" style="display:grid;grid-template-columns:1fr 1fr;gap:18px;"></div>
   <div id="cardsEscIT" style="display:none;grid-template-columns:1fr 1fr;gap:18px;"></div>
+  <div id="cardsLapso" style="display:none;grid-template-columns:1fr 1fr;gap:18px;"></div>
 
   <p style="font-size:13px;color:var(--text-muted);margin-top:30px;text-align:center;line-height:1.6;">
     Se relee la bandeja cada 5 minutos y cada mail queda guardado con su fecha real.<br>
@@ -281,10 +284,13 @@
   var rangeLine = document.getElementById("rangeLine");
   var cardsEl = document.getElementById("cards");
   var cardsEscITEl = document.getElementById("cardsEscIT");
+  var cardsLapsoEl = document.getElementById("cardsLapso");
   var rangeLineEscITEl = document.getElementById("rangeLineEscIT");
+  var rangeLineLapsoEl = document.getElementById("rangeLineLapso");
   var rangePanelEl = document.getElementById("rangePanel");
   var tabButtons = document.querySelectorAll(".rl-tab");
   var currentTab = "resumen";
+  var currentLapsoRange = null; // { fromMs, toMs } una vez que se genera
 
   function applyTabStyles() {
     tabButtons.forEach(function (btn) {
@@ -293,13 +299,22 @@
       btn.style.borderBottomColor = active ? "var(--accent)" : "transparent";
     });
     var isResumen = currentTab === "resumen";
+    var isEscIT = currentTab === "escalamientosIT";
+    var isLapso = currentTab === "lapso";
+
     cardsEl.style.display = isResumen ? "grid" : "none";
-    cardsEscITEl.style.display = isResumen ? "none" : "grid";
+    cardsEscITEl.style.display = isEscIT ? "grid" : "none";
+    cardsLapsoEl.style.display = isLapso ? "grid" : "none";
+
     rangeLine.style.display = isResumen ? "block" : "none";
-    rangeLineEscITEl.style.display = isResumen ? "none" : "block";
-    rangePanelEl.style.display = isResumen ? "block" : "none";
+    rangeLineEscITEl.style.display = isEscIT ? "block" : "none";
+    rangeLineLapsoEl.style.display = isLapso ? "block" : "none";
+
+    rangePanelEl.style.display = isLapso ? "block" : "none";
     presetEl.style.display = isResumen ? "block" : "none";
-    if (!isResumen) renderEscalamientosIT();
+
+    if (isEscIT) renderEscalamientosIT();
+    if (isLapso) rerenderLapso();
   }
 
   tabButtons.forEach(function (btn) {
@@ -461,6 +476,26 @@
     renderCards(buckets, dark, cardsEl, CATEGORY_META);
   }
 
+  function applyLapsoRange(fromMs, toMs) {
+    currentLapsoRange = { fromMs: fromMs, toMs: toMs };
+    var filtered = mails.filter(function (m) { return m.timestamp >= fromMs && m.timestamp <= toMs; });
+    var dark = isDark();
+    rangeLineLapsoEl.textContent = "Rango " + fmt(fromMs) + " → " + fmt(toMs) +
+      "  ·  " + filtered.length + (filtered.length === 1 ? " mail" : " mails") +
+      (lastRun ? "  ·  última lectura de bandeja " + fmt(lastRun.timestamp) : "");
+    var buckets = buildBuckets(filtered);
+    renderCards(buckets, dark, cardsLapsoEl, CATEGORY_META);
+  }
+
+  function rerenderLapso() {
+    if (currentLapsoRange) {
+      applyLapsoRange(currentLapsoRange.fromMs, currentLapsoRange.toMs);
+    } else {
+      rangeLineLapsoEl.textContent = "Elegí un rango de fechas y horas arriba y tocá \"Generar resumen\".";
+      cardsLapsoEl.innerHTML = "";
+    }
+  }
+
   var ARG_OFFSET_MS = 3 * 3600 * 1000; // Argentina es UTC-3 fijo
 
   function startOfArgTodayMs(nowMs) {
@@ -507,6 +542,8 @@
     if (currentRange) {
       applyRange(currentRange.fromMs, currentRange.toMs, currentRange.label);
     }
+    if (currentTab === "escalamientosIT") renderEscalamientosIT();
+    if (currentTab === "lapso") rerenderLapso();
   }
 
   if (lastRun && lastRun.error) {
@@ -555,8 +592,7 @@
       return;
     }
     msg.textContent = "";
-    presetEl.selectedIndex = -1;
-    applyRange(fromMs, toMs, "Resumen personalizado");
+    applyLapsoRange(fromMs, toMs);
   });
 })();
 </script>
