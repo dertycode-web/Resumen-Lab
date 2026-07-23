@@ -385,14 +385,14 @@ def main():
     html, match, data = load_data()
     last_run = data.get("lastRun") or {}
     range_from = last_run.get("rangeTo") or (now_ms - 6 * 3600 * 1000)
-    # ventana de búsqueda: un poco más ancha que el "rangeFrom" real para no
-    # perder mails por desfasajes de reloj o corridas salteadas; el filtro
-    # fino es por fecha real. Antes el piso era de 6hs fijas, lo que obligaba
-    # a re-descargar y re-clasificar decenas de mails ya conocidos en CADA
-    # corrida (con las corridas cada 5 min esto hacia que el script tardara
-    # varios minutos y se colgara). Con 45 min alcanza de sobra como colchon.
-    MIN_LOOKBACK_MS = 45 * 60 * 1000
-    search_window_start = min(range_from, now_ms - MIN_LOOKBACK_MS)
+    # Tope maximo de cuanto se puede volver hacia atras, sin importar que tan
+    # vieja sea la ultima corrida GUARDADA. Si una corrida se cuelga y muere
+    # antes de escribir "lastRun", la proxima corrida volveria a intentar el
+    # mismo backlog enorme, se colgaria de nuevo, y nunca avanzaria (circulo
+    # vicioso). Con este tope, en el peor caso se puede perder algun mail
+    # viejo si hubo un corte muy largo, pero el script siempre puede terminar.
+    MAX_LOOKBACK_MS = 60 * 60 * 1000
+    search_window_start = max(range_from, now_ms - MAX_LOOKBACK_MS)
 
     error_msg = None
     new_or_updated = 0
