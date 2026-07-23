@@ -184,9 +184,10 @@
     },
     {
       "id": "19f8f559f1a0ee79",
-      "timestamp": 1783022940000,
+      "timestamp": 1784817485000,
       "subject": "RE: Sitios sin leyenda \"Fecha de Solución\" - PEC",
-      "category": "it"
+      "category": "it",
+      "firstSeen": 1783022940000
     }
   ],
   "lastRun": {
@@ -293,7 +294,8 @@
       if (m.category === "afectacionMasiva") {
         buckets.afectacionMasiva.push({ subject: m.subject, resolved: m.resolved === true });
       } else if (m.category === "it" || m.category === "ingenieria") {
-        var ageHours = (nowMs - m.timestamp) / 3600000;
+        var originMs = (typeof m.firstSeen === "number") ? m.firstSeen : m.timestamp;
+        var ageHours = (nowMs - originMs) / 3600000;
         var key = m.category + (ageHours >= 5 ? "EnCurso" : "Nuevo");
         buckets[key].push({ subject: m.subject, ageHours: ageHours });
       } else if (m.category === "tareas") {

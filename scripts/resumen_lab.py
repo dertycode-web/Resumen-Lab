@@ -272,22 +272,26 @@ def classify(imap, uid, msg):
         )
         if matched_it:
             thrid = gm_thread_id_hex(imap, uid)
-            if thrid:
-                ts = thread_first_message_ms(imap, thrid, own_ms)
-            else:
-                quoted_ms = earliest_quoted_date_ms(body)
-                ts = min(own_ms, quoted_ms) if quoted_ms else own_ms
-            return {"category": "it", "timestamp": ts, "subject": subject, "thread_id": thrid}
+            origin_ms = thread_first_message_ms(imap, thrid, own_ms) if thrid else own_ms
+            quoted_ms = earliest_quoted_date_ms(body)
+            if quoted_ms:
+                origin_ms = min(origin_ms, quoted_ms)
+            return {
+                "category": "it", "timestamp": own_ms, "firstSeen": origin_ms,
+                "subject": subject, "thread_id": thrid,
+            }
 
         matched_ing = any(re.search(r"\b" + re.escape(k) + r"\b", recipients_text) for k in ING_RECIPIENT_KEYWORDS)
         if matched_ing:
             thrid = gm_thread_id_hex(imap, uid)
-            if thrid:
-                ts = thread_first_message_ms(imap, thrid, own_ms)
-            else:
-                quoted_ms = earliest_quoted_date_ms(body)
-                ts = min(own_ms, quoted_ms) if quoted_ms else own_ms
-            return {"category": "ingenieria", "timestamp": ts, "subject": subject, "thread_id": thrid}
+            origin_ms = thread_first_message_ms(imap, thrid, own_ms) if thrid else own_ms
+            quoted_ms = earliest_quoted_date_ms(body)
+            if quoted_ms:
+                origin_ms = min(origin_ms, quoted_ms)
+            return {
+                "category": "ingenieria", "timestamp": own_ms, "firstSeen": origin_ms,
+                "subject": subject, "thread_id": thrid,
+            }
 
         # 5. Informes (subject-based, sender is reportestecnica in practice)
         if "informe" in subject_lower:
@@ -399,9 +403,15 @@ def main():
                 record_id = thrid or f"uid-{uid.decode() if isinstance(uid, bytes) else uid}"
 
                 existing = mails_by_id.get(record_id)
+                new_ts = result["timestamp"] if result["timestamp"] is not None else own_ms
                 if existing:
                     existing["subject"] = result["subject"]
                     existing["category"] = result["category"]
+                    # "timestamp" = ultima actividad conocida (para que el item
+                    # se siga mostrando en rangos recientes mientras haya novedades)
+                    existing["timestamp"] = max(existing.get("timestamp", 0), new_ts)
+                    if "firstSeen" in result:
+                        existing["firstSeen"] = min(existing.get("firstSeen", result["firstSeen"]), result["firstSeen"])
                     if "resolved" in result:
                         if result["resolved"] is True:
                             existing["resolved"] = True
@@ -410,10 +420,12 @@ def main():
                 else:
                     record = {
                         "id": record_id,
-                        "timestamp": result["timestamp"] if result["timestamp"] is not None else own_ms,
+                        "timestamp": new_ts,
                         "subject": result["subject"],
                         "category": result["category"],
                     }
+                    if "firstSeen" in result:
+                        record["firstSeen"] = result["firstSeen"]
                     if "resolved" in result:
                         record["resolved"] = result["resolved"]
                     mails_by_id[record_id] = record
