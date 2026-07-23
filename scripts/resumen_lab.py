@@ -130,21 +130,17 @@ def epoch_ms_from_date_header(msg):
         return None
 
 
-# Caches por corrida (el proceso arranca de cero cada vez que corre el
-# workflow, asi que no hace falta persistirlos): evitan repetir las mismas
-# consultas IMAP cuando varios mails del mismo hilo aparecen en la misma
-# corrida, o cuando la solapa "Escalamientos IT" vuelve a pedir el thread id
-# de un mail que "classify()" ya habia resuelto un momento antes.
+# Cache por corrida (el proceso arranca de cero cada vez que corre el
+# workflow): evita pedir el thread id dos veces para el mismo mail cuando
+# tanto classify() como classify_escalamientos_it() lo necesitan.
 _THRID_CACHE = {}
-_THREAD_UIDS_CACHE = {}
-_MSG_CACHE = {}
-_THREAD_FIRST_MS_CACHE = {}
-_THREAD_RESOLVED_CACHE = {}
 
 
 def gm_thread_id_hex(imap, uid):
-    """Fetch Gmail's X-GM-THRID extension and return it as lowercase hex,
-    matching the format Gmail's web/API thread ids use."""
+    """Fetch Gmail's X-GM-THRID extension y lo devuelve en hex. Es UNA sola
+    consulta extra por mail (no recorre el resto del hilo) — se usa solo
+    como clave estable para agrupar respuestas del mismo hilo a lo largo
+    de corridas, no para recalcular fechas viejas."""
     uid_key = uid.decode() if isinstance(uid, bytes) else uid
     if uid_key in _THRID_CACHE:
         return _THRID_CACHE[uid_key]
@@ -158,7 +154,6 @@ def gm_thread_id_hex(imap, uid):
             raw = raw.decode(errors="replace")
         m = re.search(r"X-GM-THRID\s+(\d+)", raw)
         if not m:
-            log(f"[gm_thread_id_hex] uid={uid} sin match en respuesta: {raw!r}")
             _THRID_CACHE[uid_key] = None
             return None
         thrid_int = int(m.group(1))
@@ -171,65 +166,12 @@ def gm_thread_id_hex(imap, uid):
         return None
 
 
-def thread_message_uids(imap, thrid_hex):
-    if thrid_hex in _THREAD_UIDS_CACHE:
-        return _THREAD_UIDS_CACHE[thrid_hex]
-    try:
-        thrid_int = int(thrid_hex, 16)
-        typ, data = imap.uid("search", None, "X-GM-THRID", str(thrid_int))
-        result = data[0].split() if typ == "OK" and data and data[0] else []
-    except Exception:
-        result = []
-    _THREAD_UIDS_CACHE[thrid_hex] = result
-    return result
-
-
 def fetch_message(imap, uid):
-    uid_key = uid.decode() if isinstance(uid, bytes) else uid
-    if uid_key in _MSG_CACHE:
-        return _MSG_CACHE[uid_key]
     typ, data = imap.uid("fetch", uid, "(RFC822)")
-    msg = None
-    if typ == "OK" and data and data[0]:
-        raw = data[0][1]
-        msg = email.message_from_bytes(raw)
-    _MSG_CACHE[uid_key] = msg
-    return msg
-
-
-def thread_first_message_ms(imap, thrid_hex, fallback_ms):
-    if thrid_hex in _THREAD_FIRST_MS_CACHE:
-        return _THREAD_FIRST_MS_CACHE[thrid_hex]
-    uids = thread_message_uids(imap, thrid_hex)
-    dates = []
-    for u in uids:
-        m = fetch_message(imap, u)
-        if m is None:
-            continue
-        ms = epoch_ms_from_date_header(m)
-        if ms is not None:
-            dates.append(ms)
-    result = min(dates) if dates else fallback_ms
-    _THREAD_FIRST_MS_CACHE[thrid_hex] = result
-    return result
-
-
-def thread_is_resolved(imap, thrid_hex):
-    if thrid_hex in _THREAD_RESOLVED_CACHE:
-        return _THREAD_RESOLVED_CACHE[thrid_hex]
-    uids = thread_message_uids(imap, thrid_hex)
-    result = False
-    for u in uids:
-        m = fetch_message(imap, u)
-        if m is None:
-            continue
-        subject = decode_mime_header(m.get("Subject"))
-        body = get_body_text(m)
-        if CLOSURE_RE.search(subject) or CLOSURE_RE.search(body):
-            result = True
-            break
-    _THREAD_RESOLVED_CACHE[thrid_hex] = result
-    return result
+    if typ != "OK" or not data or not data[0]:
+        return None
+    raw = data[0][1]
+    return email.message_from_bytes(raw)
 
 
 MESES_ES = {
@@ -274,11 +216,14 @@ def is_it_escalation_recipient(recipients_text):
 def classify_escalamientos_it(imap, uid, subject, body, recipients_text, own_ms):
     """Solapa 'Escalamientos IT': cualquier mail (de cualquier remitente)
     enviado a Gestion de Incidentes / Help Desk / Help Desk Billetera.
-    Independiente de la clasificacion principal (puede coexistir con ella)."""
+    Independiente de la clasificacion principal (puede coexistir con ella).
+    El origen real del hilo se arma solo, mail a mail, con el "firstSeen"
+    minimo que va viendo cada corrida (ver merge_result en main) — no hace
+    falta re-bajar el hilo entero para saberlo."""
     if not is_it_escalation_recipient(recipients_text):
         return None
     thrid = gm_thread_id_hex(imap, uid)
-    origin_ms = thread_first_message_ms(imap, thrid, own_ms) if thrid else own_ms
+    origin_ms = own_ms
     quoted_ms = earliest_quoted_date_ms(body)
     if quoted_ms:
         origin_ms = min(origin_ms, quoted_ms)
@@ -305,13 +250,12 @@ def classify(imap, uid, msg):
         return {"category": "tareas", "timestamp": own_ms, "subject": subject}
 
     # 2. Afectaciones masivas
+    # "resolved" se acumula mail a mail: si ESTE mensaje puntual tiene la
+    # palabra de cierre, se marca resuelto (y merge_result en main() hace
+    # que, una vez resuelto, se quede resuelto aunque no vuelva a aparecer).
     if sender_addr == AFECTACION_MASIVA_SENDER:
         thrid = gm_thread_id_hex(imap, uid)
-        resolved = False
-        if thrid:
-            resolved = thread_is_resolved(imap, thrid)
-        else:
-            resolved = bool(CLOSURE_RE.search(subject) or CLOSURE_RE.search(body))
+        resolved = bool(CLOSURE_RE.search(subject) or CLOSURE_RE.search(body))
         return {
             "category": "afectacionMasiva",
             "timestamp": own_ms,
@@ -321,11 +265,15 @@ def classify(imap, uid, msg):
         }
 
     # 3. Reportes Tecnica -> IT / Ingenieria
+    # "firstSeen" tambien se acumula mail a mail (ver merge_result): cada
+    # corrida aporta como candidato de origen la fecha de ESTE mensaje mas
+    # cualquier fecha citada en su cuerpo, y el minimo historico gana. No
+    # hace falta re-bajar el hilo completo para saber cuando empezo.
     if REPORTES_TECNICA_HINT in sender_addr:
         matched_it = is_it_escalation_recipient(recipients_text)
         if matched_it:
             thrid = gm_thread_id_hex(imap, uid)
-            origin_ms = thread_first_message_ms(imap, thrid, own_ms) if thrid else own_ms
+            origin_ms = own_ms
             quoted_ms = earliest_quoted_date_ms(body)
             if quoted_ms:
                 origin_ms = min(origin_ms, quoted_ms)
@@ -337,7 +285,7 @@ def classify(imap, uid, msg):
         matched_ing = any(re.search(r"\b" + re.escape(k) + r"\b", recipients_text) for k in ING_RECIPIENT_KEYWORDS)
         if matched_ing:
             thrid = gm_thread_id_hex(imap, uid)
-            origin_ms = thread_first_message_ms(imap, thrid, own_ms) if thrid else own_ms
+            origin_ms = own_ms
             quoted_ms = earliest_quoted_date_ms(body)
             if quoted_ms:
                 origin_ms = min(origin_ms, quoted_ms)
