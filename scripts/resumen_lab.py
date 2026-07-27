@@ -109,35 +109,9 @@ def strip_html(html):
     return text
 
 
-def get_body_text(msg):
-    chunks = []
-    if msg.is_multipart():
-        for part in msg.walk():
-            ctype = part.get_content_type()
-            disp = str(part.get("Content-Disposition") or "")
-            if "attachment" in disp:
-                continue
-            if ctype == "text/plain":
-                try:
-                    chunks.append(part.get_payload(decode=True).decode(part.get_content_charset() or "utf-8", errors="replace"))
-                except Exception:
-                    pass
-            elif ctype == "text/html" and not chunks:
-                try:
-                    html = part.get_payload(decode=True).decode(part.get_content_charset() or "utf-8", errors="replace")
-                    chunks.append(strip_html(html))
-                except Exception:
-                    pass
-    else:
-        ctype = msg.get_content_type()
-        try:
-            payload = msg.get_payload(decode=True).decode(msg.get_content_charset() or "utf-8", errors="replace")
-            chunks.append(strip_html(payload) if ctype == "text/html" else payload)
-        except Exception:
-            pass
-    text = "\n".join(chunks)
+def truncate_body(text):
     if len(text) > MAX_BODY_CHARS:
-        text = text[:MAX_BODY_CHARS] + "\n[...cortado...]"
+        return text[:MAX_BODY_CHARS] + "\n[...cortado...]"
     return text
 
 
@@ -261,24 +235,6 @@ def fetch_headers_batch(imap, uids, chunk_size=150):
     return _fetch_literal_batch(imap, uids, "BODY.PEEK[HEADER]", chunk_size)
 
 
-# Tope de bytes que bajamos por mensaje al pedir el "cuerpo completo". RFC822
-# trae el mensaje entero, imagenes adjuntas incluidas — y varios mails (los
-# informes, por ejemplo) traen hasta 10+ imagenes embebidas que no usamos
-# para nada (get_body_text() descarta todo lo que no sea texto). Bajar esas
-# imagenes por IMAP y despues tirarlas es lo que estaba agotando la cuota de
-# ancho de banda de Gmail. Con un fetch parcial (BODY.PEEK[]<0.N>) solo
-# bajamos los primeros N bytes de cada mensaje: de sobra para encabezados +
-# texto plano, pero cortamos mucho antes de llegar a las imagenes pesadas.
-MAX_MESSAGE_FETCH_BYTES = 150_000
-
-
-def fetch_full_batch(imap, uids, chunk_size=100):
-    """Primeros MAX_MESSAGE_FETCH_BYTES bytes de cada mensaje (encabezados +
-    texto, sin la parte pesada de adjuntos/imagenes) — para los UIDs que
-    realmente vamos a clasificar y guardar."""
-    return _fetch_literal_batch(imap, uids, f"BODY.PEEK[]<0.{MAX_MESSAGE_FETCH_BYTES}>", chunk_size)
-
-
 def fetch_thrids_batch(imap, uids, chunk_size=150):
     """X-GM-THRID (extension de Gmail) para varios UIDs de una — se usa como
     clave estable para agrupar respuestas del mismo hilo a lo largo de
@@ -303,14 +259,233 @@ def fetch_thrids_batch(imap, uids, chunk_size=150):
 
 
 # ---------------------------------------------------------------------------
+# BODYSTRUCTURE: identifica QUE parte de cada mail es el texto (plano o
+# html), para poder pedirle a IMAP solo esa parte puntual — nunca las
+# imagenes/adjuntos. BODYSTRUCTURE en si es solo metadata (tipos, tamanos),
+# no baja contenido, asi que consultarla es practicamente gratis.
+# ---------------------------------------------------------------------------
+
+MAX_TEXT_PART_FETCH_BYTES = 80_000  # tope defensivo por si el texto plano fuera enorme
+
+
+def _tokenize_imap_list(s):
+    tokens = []
+    i, n = 0, len(s)
+    while i < n:
+        c = s[i]
+        if c in "()":
+            tokens.append(c)
+            i += 1
+        elif c == '"':
+            j = i + 1
+            buf = []
+            while j < n and s[j] != '"':
+                if s[j] == "\\" and j + 1 < n:
+                    buf.append(s[j + 1])
+                    j += 2
+                else:
+                    buf.append(s[j])
+                    j += 1
+            tokens.append("".join(buf))
+            i = j + 1
+        elif c.isspace():
+            i += 1
+        else:
+            j = i
+            while j < n and s[j] not in "() \t\r\n":
+                j += 1
+            atom = s[i:j]
+            tokens.append(None if atom.upper() == "NIL" else atom)
+            i = j
+    return tokens
+
+
+def _parse_imap_tokens(tokens):
+    pos = [0]
+
+    def parse():
+        tok = tokens[pos[0]]
+        if tok == "(":
+            pos[0] += 1
+            lst = []
+            while tokens[pos[0]] != ")":
+                lst.append(parse())
+            pos[0] += 1
+            return lst
+        pos[0] += 1
+        return tok
+
+    return parse()
+
+
+def _extract_balanced(s, start):
+    """Devuelve el substring balanceado en parentesis que empieza en s[start]
+    (que debe ser '('), hasta su cierre correspondiente."""
+    depth = 0
+    in_quotes = False
+    for i in range(start, len(s)):
+        c = s[i]
+        if c == '"' and (i == 0 or s[i - 1] != "\\"):
+            in_quotes = not in_quotes
+        elif not in_quotes:
+            if c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+                if depth == 0:
+                    return s[start:i + 1]
+    return s[start:]
+
+
+def parse_bodystructure(raw_line):
+    """raw_line: la linea de respuesta IMAP completa (str) que contiene
+    'BODYSTRUCTURE (...)'. Devuelve el arbol parseado (lista anidada) o None."""
+    m = re.search(r"BODYSTRUCTURE\s*(\()", raw_line, re.IGNORECASE)
+    if not m:
+        return None
+    start = m.start(1)
+    balanced = _extract_balanced(raw_line, start)
+    try:
+        tokens = _tokenize_imap_list(balanced)
+        return _parse_imap_tokens(tokens)
+    except Exception:
+        return None
+
+
+def _resolve_text_leaf(node, prefix):
+    """node: nodo parseado de bodystructure. prefix: lista de ints (path).
+    Devuelve (part_num_str, subtype, charset, encoding) del mejor candidato
+    de texto (prefiere text/plain sobre text/html), o None si no hay texto."""
+    if not isinstance(node, list) or not node:
+        return None
+
+    if isinstance(node[0], list):
+        # Es multipart: los primeros elementos (listas) son las sub-partes,
+        # hasta que aparece el string con el subtipo ("alternative","mixed",...).
+        children = []
+        for item in node:
+            if isinstance(item, list):
+                children.append(item)
+            else:
+                break
+        candidates = []
+        for idx, child in enumerate(children, start=1):
+            r = _resolve_text_leaf(child, prefix + [idx])
+            if r:
+                candidates.append(r)
+        for r in candidates:
+            if r[1] == "plain":
+                return r
+        for r in candidates:
+            if r[1] == "html":
+                return r
+        return None
+
+    # Nodo hoja: (type, subtype, params, id, description, encoding, size, ...)
+    type_ = (node[0] or "").lower() if isinstance(node[0], str) else ""
+    if type_ != "text":
+        return None
+    subtype = (node[1] or "").lower() if len(node) > 1 and isinstance(node[1], str) else ""
+    charset = "utf-8"
+    params = node[2] if len(node) > 2 else None
+    if isinstance(params, list):
+        for k in range(0, len(params) - 1, 2):
+            if isinstance(params[k], str) and params[k].upper() == "CHARSET" and params[k + 1]:
+                charset = params[k + 1]
+    encoding = "7BIT"
+    if len(node) > 5 and isinstance(node[5], str):
+        encoding = node[5]
+    part_num = ".".join(str(x) for x in prefix) if prefix else "1"
+    return (part_num, subtype, charset, encoding)
+
+
+def fetch_bodystructures_batch(imap, uids, chunk_size=150):
+    """BODYSTRUCTURE (solo metadata, no baja contenido) para varios UIDs de
+    una. Devuelve {uid_str: (part_num, subtype, charset, encoding) | None}."""
+    results = {}
+    uid_strs = [_uid_str(u) for u in uids]
+    for i in range(0, len(uid_strs), chunk_size):
+        chunk = uid_strs[i:i + chunk_size]
+        uid_set = ",".join(chunk)
+        typ, data = imap.uid("fetch", uid_set, "(UID BODYSTRUCTURE)")
+        if typ != "OK" or not data:
+            raise RuntimeError(f"fetch en lote fallo (typ={typ}) para BODYSTRUCTURE")
+        for item in data:
+            if item is None:
+                continue
+            s = item.decode(errors="replace") if isinstance(item, bytes) else str(item)
+            uid_m = re.search(r"UID (\d+)", s)
+            if not uid_m:
+                continue
+            tree = parse_bodystructure(s)
+            resolved = _resolve_text_leaf(tree, []) if tree else None
+            results[uid_m.group(1)] = resolved
+        if i + chunk_size < len(uid_strs):
+            time.sleep(0.3)
+    return results
+
+
+def build_body_text(subtype, charset, encoding, raw_bytes):
+    """Arma un mini-mensaje MIME de una sola parte (encabezado sintetico +
+    los bytes ya bajados de esa parte) para reusar el decoder estandar de
+    Content-Transfer-Encoding (base64/quoted-printable/etc.) de la libreria
+    email, sin tener que reimplementarlo a mano."""
+    header = f"Content-Type: text/{subtype}; charset={charset}\r\nContent-Transfer-Encoding: {encoding}\r\n\r\n".encode("ascii", errors="replace")
+    try:
+        part_msg = email.message_from_bytes(header + raw_bytes)
+        payload = part_msg.get_payload(decode=True)
+        text = payload.decode(charset or "utf-8", errors="replace") if payload is not None else ""
+    except Exception:
+        text = raw_bytes.decode("utf-8", errors="replace")
+    if subtype == "html":
+        text = strip_html(text)
+    return truncate_body(text)
+
+
+def fetch_body_texts_batch(imap, resolved_by_uid, chunk_size=100):
+    """Baja SOLO la parte de texto resuelta por BODYSTRUCTURE para cada UID
+    (nunca imagenes/adjuntos). Agrupa por numero de parte (normalmente son
+    pocos grupos distintos: "1", "1.1", etc.) para seguir haciendo pocas
+    consultas IMAP en total. Devuelve {uid_str: texto_ya_decodificado}."""
+    by_part = {}
+    for uid_str, resolved in resolved_by_uid.items():
+        if not resolved:
+            continue
+        part_num, subtype, charset, encoding = resolved
+        by_part.setdefault(part_num, []).append(uid_str)
+
+    texts = {}
+    for part_num, uid_strs in by_part.items():
+        spec = f"BODY.PEEK[{part_num}]<0.{MAX_TEXT_PART_FETCH_BYTES}>"
+        for i in range(0, len(uid_strs), chunk_size):
+            chunk = uid_strs[i:i + chunk_size]
+            uid_set = ",".join(chunk)
+            typ, data = imap.uid("fetch", uid_set, f"(UID {spec})")
+            if typ != "OK" or not data:
+                raise RuntimeError(f"fetch en lote fallo (typ={typ}) para {spec}")
+            for item in data:
+                if isinstance(item, tuple) and len(item) == 2:
+                    meta, literal = item
+                    uid_str = _parse_uid_from_meta(meta)
+                    if uid_str and literal is not None:
+                        _, subtype, charset, encoding = resolved_by_uid[uid_str]
+                        texts[uid_str] = build_body_text(subtype, charset, encoding, literal)
+            if i + chunk_size < len(uid_strs):
+                time.sleep(0.3)
+    return texts
+
+
+# ---------------------------------------------------------------------------
 # Clasificacion: devuelve una lista de categorias aplicables (un mail puede
 # pertenecer a mas de una a la vez, ej. "it" + "escalamientosIT"), mas los
 # datos que necesita cada categoria (origen del hilo, cierre detectado).
-# No hace NINGUNA consulta IMAP propia — trabaja solo sobre el mensaje ya
-# descargado (el X-GM-THRID se resuelve aparte, en lote, en main()).
+# No hace NINGUNA consulta IMAP propia — recibe el encabezado (ya bajado en
+# lote) y el texto del cuerpo (ya resuelto/bajado via BODYSTRUCTURE, sin
+# imagenes) por separado; el X-GM-THRID se resuelve aparte, en lote, en
+# process_candidate_uids().
 # ---------------------------------------------------------------------------
 
-def classify(msg):
+def classify(msg, body):
     subject = decode_mime_header(msg.get("Subject")) or ""
     sender_raw = decode_mime_header(msg.get("From")) or ""
     sender_name, sender_addr = email.utils.parseaddr(sender_raw)
@@ -318,7 +493,6 @@ def classify(msg):
     to_text = addr_list_text(msg, "To")
     cc_text = addr_list_text(msg, "Cc")
     recipients_text = (to_text + " " + cc_text).lower()
-    body = get_body_text(msg)
     subject_lower = subject.lower()
     own_ms = epoch_ms_from_date_header(msg)
 
@@ -490,26 +664,35 @@ def is_quota_error(exc):
 
 def process_candidate_uids(imap, sb, uids, window_start_ms=None, window_end_ms=None, prefilter_headers=False):
     """Clasifica y guarda en Supabase una lista de UIDs candidatos (ya
-    ordenados o no). Si prefilter_headers=True, primero chequea la fecha via
-    encabezado liviano (sin cuerpo) y descarta lo que cae fuera de
-    [window_start_ms, window_end_ms] ANTES de bajar el mensaje completo —
-    asi evita pagar el costo de RFC822 para mails que se van a descartar de
-    todas formas. Devuelve la cantidad de mails guardados (con >=1 categoria).
-    Puede tirar una excepcion si algun fetch en lote falla (el llamador
-    decide que hacer con el checkpoint en ese caso)."""
+    ordenados o no).
+
+    Los encabezados SIEMPRE se bajan primero (son livianos y ya nos sirven
+    tanto para el prefiltro de fecha como para clasificar despues). Si
+    prefilter_headers=True, se descartan los que caen fuera de
+    [window_start_ms, window_end_ms] antes de seguir.
+
+    Para el cuerpo, en vez de bajar el mensaje completo (que incluye
+    imagenes/adjuntos que no usamos), se consulta primero BODYSTRUCTURE
+    (metadata pura, no baja contenido) para saber exactamente que parte es
+    texto, y se baja SOLO esa parte puntual. Esto es lo que evita gastar el
+    ancho de banda de Gmail en imagenes que despues se tiran.
+
+    Devuelve la cantidad de mails guardados (con >=1 categoria). Puede tirar
+    una excepcion si algun fetch en lote falla (el llamador decide que hacer
+    con el checkpoint en ese caso)."""
     if not uids:
         return 0
 
     uids_sorted = sorted(uids, key=lambda u: int(_uid_str(u)))
+    headers = fetch_headers_batch(imap, uids_sorted)
 
-    if prefilter_headers:
-        headers = fetch_headers_batch(imap, uids_sorted)
-        fetch_targets = []
-        for u in uids_sorted:
-            uid_str = _uid_str(u)
-            hmsg = headers.get(uid_str)
-            if hmsg is None:
-                continue
+    fetch_targets = []
+    for u in uids_sorted:
+        uid_str = _uid_str(u)
+        hmsg = headers.get(uid_str)
+        if hmsg is None:
+            continue
+        if prefilter_headers:
             h_ms = epoch_ms_from_date_header(hmsg)
             if h_ms is None:
                 continue
@@ -517,20 +700,21 @@ def process_candidate_uids(imap, sb, uids, window_start_ms=None, window_end_ms=N
                 continue
             if window_end_ms is not None and h_ms > window_end_ms:
                 continue
-            fetch_targets.append(u)
+        fetch_targets.append(u)
+    if prefilter_headers:
         log(f"Dentro de ventana tras chequear encabezados: {len(fetch_targets)}")
-    else:
-        fetch_targets = uids_sorted
 
-    full_msgs = fetch_full_batch(imap, fetch_targets)
+    resolved = fetch_bodystructures_batch(imap, fetch_targets)
+    body_texts = fetch_body_texts_batch(imap, resolved)
 
     results_by_uid = {}
     for u in fetch_targets:
         uid_str = _uid_str(u)
-        msg = full_msgs.get(uid_str)
-        if msg is None:
+        hmsg = headers.get(uid_str)
+        if hmsg is None:
             continue
-        result = classify(msg)
+        body = body_texts.get(uid_str, "")
+        result = classify(hmsg, body)
         if result is not None:
             results_by_uid[uid_str] = result
 
