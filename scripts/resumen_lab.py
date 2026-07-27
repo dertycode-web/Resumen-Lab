@@ -191,6 +191,19 @@ def fetch_message(imap, uid):
     return email.message_from_bytes(raw)
 
 
+def fetch_header_only(imap, uid):
+    """Trae SOLO el encabezado (sin el cuerpo) para poder chequear la fecha
+    del mail sin bajar el mensaje completo. Mucho mas liviano que RFC822 —
+    evita descargar cuerpos grandes de mails que despues se van a descartar
+    por caer fuera de la ventana de tiempo (esto pasaba antes: el filtro por
+    fecha se aplicaba DESPUES de bajar el mail entero)."""
+    typ, data = imap.uid("fetch", uid, "(BODY.PEEK[HEADER])")
+    if typ != "OK" or not data or not data[0]:
+        return None
+    raw = data[0][1]
+    return email.message_from_bytes(raw)
+
+
 MESES_ES = {
     "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
     "julio": 7, "agosto": 8, "septiembre": 9, "setiembre": 9, "octubre": 10,
@@ -442,11 +455,21 @@ def main():
 
         for uid in uids:
             try:
+                # Paso 1: solo el encabezado, para chequear la fecha barato.
+                # SINCE es de granularidad diaria, asi que trae candidatos de
+                # todo un dia; sin este paso, se bajaba el mail ENTERO (cuerpo
+                # incluido) solo para descartarlo despues por la fecha.
+                header_msg = fetch_header_only(imap, uid)
+                if header_msg is None:
+                    continue
+                own_ms = epoch_ms_from_date_header(header_msg)
+                if own_ms is None or own_ms < search_window_start or own_ms > now_ms + 5 * 60 * 1000:
+                    continue
+
+                # Paso 2: recien aca bajamos el mail completo (con cuerpo),
+                # solo para los que realmente caen dentro de la ventana.
                 msg = fetch_message(imap, uid)
                 if msg is None:
-                    continue
-                own_ms = epoch_ms_from_date_header(msg)
-                if own_ms is None or own_ms < search_window_start or own_ms > now_ms + 5 * 60 * 1000:
                     continue
 
                 result = classify(imap, uid, msg)
