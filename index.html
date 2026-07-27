@@ -98,6 +98,7 @@
         <h1 style="font-size:28px;font-weight:600;margin:0;letter-spacing:-0.2px;color:var(--text-title);">Resumen LAB</h1>
         <div id="rangeLine" style="font-size:15px;color:var(--text-secondary);margin-top:4px;"></div>
         <div id="rangeLineEscIT" style="display:none;font-size:15px;color:var(--text-secondary);margin-top:4px;"></div>
+        <div id="rangeLineTareas" style="display:none;font-size:15px;color:var(--text-secondary);margin-top:4px;"></div>
         <div id="rangeLineLapso" style="display:none;font-size:15px;color:var(--text-secondary);margin-top:4px;"></div>
       </div>
     </div>
@@ -109,6 +110,7 @@
   <div id="tabBar" style="display:flex;gap:8px;margin-bottom:18px;border-bottom:1px solid var(--panel-border);">
     <button class="rl-tab" data-tab="resumen" style="border:none;background:none;padding:10px 6px;margin-right:14px;font-size:15.5px;font-weight:600;cursor:pointer;color:var(--text-secondary);border-bottom:3px solid transparent;">Resumen</button>
     <button class="rl-tab" data-tab="escalamientosIT" style="border:none;background:none;padding:10px 6px;margin-right:14px;font-size:15.5px;font-weight:600;cursor:pointer;color:var(--text-secondary);border-bottom:3px solid transparent;">Escalamientos IT</button>
+    <button class="rl-tab" data-tab="tareas" style="border:none;background:none;padding:10px 6px;margin-right:14px;font-size:15.5px;font-weight:600;cursor:pointer;color:var(--text-secondary);border-bottom:3px solid transparent;">Tareas</button>
     <button class="rl-tab" data-tab="lapso" style="border:none;background:none;padding:10px 6px;margin-right:14px;font-size:15.5px;font-weight:600;cursor:pointer;color:var(--text-secondary);border-bottom:3px solid transparent;">Resumen por lapso</button>
   </div>
 
@@ -132,6 +134,7 @@
 
   <div id="cards" style="display:grid;grid-template-columns:1fr 1fr;gap:18px;"></div>
   <div id="cardsEscIT" style="display:none;grid-template-columns:1fr;gap:18px;"></div>
+  <div id="cardsTareas" style="display:none;grid-template-columns:1fr;gap:18px;"></div>
   <div id="cardsLapso" style="display:none;grid-template-columns:1fr 1fr;gap:18px;"></div>
 
 </div>
@@ -254,20 +257,46 @@
     }
   }
 
-  // Base categories stored per-mail. "it" and "ingenieria" get split into
-  // Nuevo/EnCurso at render time based on how old the thread is RIGHT NOW —
-  // so that split is always accurate, even for mails logged a while ago.
+  // Base categories stored per-mail. Las que terminan en Nuevo/EnCurso se
+  // parten en dos al renderizar, segun que tan vieja sea la cadena AHORA —
+  // asi el split es siempre correcto, aunque el mail se haya guardado hace rato.
+  //
+  // Orden pensado para el layout de la solapa Resumen: primero (mas grandes,
+  // "big") Afectaciones masivas y Mail de Referente, bien visibles arriba de
+  // todo; despues dos columnas parejas (IT/Ingenieria/Informes a la
+  // izquierda, Operacion Tecnica/MSK/LY a la derecha).
   var CATEGORY_META = [
-    { key: "afectacionMasiva", label: "Afectaciones masivas", icon: "🚨", rgb: "216,71,47" },
+    { key: "afectacionMasiva", label: "Afectaciones masivas", icon: "🚨", rgb: "216,71,47", big: true },
+    { key: "pedidosReferentes", label: "Mail de Referente", icon: "📨", rgb: "24,138,102", big: true },
     { key: "itNuevo", label: "Escalamientos nuevos · IT", icon: "🆕", rgb: "44,123,229" },
+    { key: "operacionTecnicaNuevo", label: "Operación Técnica · Nuevos", icon: "🆕", rgb: "6,148,162" },
     { key: "itEnCurso", label: "Escalamientos en curso · IT", icon: "🔄", rgb: "44,123,229" },
+    { key: "operacionTecnicaEnCurso", label: "Operación Técnica · En curso", icon: "🔄", rgb: "6,148,162" },
     { key: "ingenieriaNuevo", label: "Escalamientos nuevos · Ingeniería", icon: "🆕", rgb: "76,139,43" },
+    { key: "operacionMSKNuevo", label: "Operación MSK · Nuevos", icon: "🆕", rgb: "138,92,214" },
     { key: "ingenieriaEnCurso", label: "Escalamientos en curso · Ingeniería", icon: "🔄", rgb: "76,139,43" },
-    { key: "pedidosReferentes", label: "Mail de Referente", icon: "📨", rgb: "24,138,102" },
-    { key: "tareas", label: "Tareas (WBS)", icon: "📋", rgb: "106,92,245" },
-    { key: "informesFija", label: "Informes de Fija", icon: "☎️", rgb: "13,120,140" },
-    { key: "informesMovil", label: "Informes de Móvil", icon: "📱", rgb: "163,86,196" }
+    { key: "operacionMSKEnCurso", label: "Operación MSK · En curso", icon: "🔄", rgb: "138,92,214" },
+    { key: "informesFija", label: "Informes Fija", icon: "☎️", rgb: "13,120,140" },
+    { key: "operacionLYNuevo", label: "Operación LY · Nuevos", icon: "🆕", rgb: "199,120,17" },
+    { key: "informesMovil", label: "Informes 611", icon: "📱", rgb: "163,86,196" },
+    { key: "operacionLYEnCurso", label: "Operación LY · En curso", icon: "🔄", rgb: "199,120,17" }
   ];
+
+  // Solapa aparte "Tareas" (antes vivia adentro de Resumen).
+  var TAREAS_META = [
+    { key: "tareas", label: "Tareas (WBS)", icon: "📋", rgb: "106,92,245" }
+  ];
+
+  // Mapa generico: que categorias guardadas en la base se parten en
+  // Nuevo/EnCurso segun antiguedad, vs. cuales van directo a un solo bucket.
+  var AGE_SPLIT_CATEGORY_KEYS = {
+    it: ["itNuevo", "itEnCurso"],
+    ingenieria: ["ingenieriaNuevo", "ingenieriaEnCurso"],
+    operacionTecnica: ["operacionTecnicaNuevo", "operacionTecnicaEnCurso"],
+    operacionMSK: ["operacionMSKNuevo", "operacionMSKEnCurso"],
+    operacionLY: ["operacionLYNuevo", "operacionLYEnCurso"]
+  };
+  var DIRECT_CATEGORY_KEYS = ["afectacionMasiva", "pedidosReferentes", "informesFija", "informesMovil"];
 
   // Solapa aparte "Escalamientos IT": cualquier mail (de cualquier remitente)
   // enviado a Gestion de Incidentes / Help Desk / Help Desk Billetera.
@@ -285,8 +314,10 @@
   var rangeLine = document.getElementById("rangeLine");
   var cardsEl = document.getElementById("cards");
   var cardsEscITEl = document.getElementById("cardsEscIT");
+  var cardsTareasEl = document.getElementById("cardsTareas");
   var cardsLapsoEl = document.getElementById("cardsLapso");
   var rangeLineEscITEl = document.getElementById("rangeLineEscIT");
+  var rangeLineTareasEl = document.getElementById("rangeLineTareas");
   var rangeLineLapsoEl = document.getElementById("rangeLineLapso");
   var rangePanelEl = document.getElementById("rangePanel");
   var tabButtons = document.querySelectorAll(".rl-tab");
@@ -301,19 +332,23 @@
     });
     var isResumen = currentTab === "resumen";
     var isEscIT = currentTab === "escalamientosIT";
+    var isTareas = currentTab === "tareas";
     var isLapso = currentTab === "lapso";
 
     cardsEl.style.display = isResumen ? "grid" : "none";
     cardsEscITEl.style.display = isEscIT ? "grid" : "none";
+    cardsTareasEl.style.display = isTareas ? "grid" : "none";
     cardsLapsoEl.style.display = isLapso ? "grid" : "none";
 
     rangeLine.style.display = isResumen ? "block" : "none";
     rangeLineEscITEl.style.display = isEscIT ? "block" : "none";
+    rangeLineTareasEl.style.display = isTareas ? "block" : "none";
     rangeLineLapsoEl.style.display = isLapso ? "block" : "none";
 
     rangePanelEl.style.display = isLapso ? "block" : "none";
 
     if (isEscIT) renderEscalamientosIT();
+    if (isTareas) refreshTareasWindow();
     if (isLapso) rerenderLapso();
   }
 
@@ -347,30 +382,28 @@
     return m + "m";
   }
 
-  function buildBuckets(mailsInRange) {
+  function buildBuckets(mailsInRange, metaList) {
+    metaList = metaList || CATEGORY_META;
     var nowMs = Date.now();
     var buckets = {};
-    CATEGORY_META.forEach(function (m) { buckets[m.key] = []; });
+    metaList.forEach(function (m) { buckets[m.key] = []; });
 
     var sorted = mailsInRange.slice().sort(function (a, b) { return b.sentAtMs - a.sentAtMs; });
 
     sorted.forEach(function (m) {
       (m.categories || []).forEach(function (cat) {
-        if (cat === "afectacionMasiva") {
-          buckets.afectacionMasiva.push({ subject: m.subject, resolved: m.resolved === true });
-        } else if (cat === "it" || cat === "ingenieria") {
+        if (AGE_SPLIT_CATEGORY_KEYS[cat]) {
+          var pair = AGE_SPLIT_CATEGORY_KEYS[cat];
+          if (!(pair[0] in buckets)) return;
           var originMs = (typeof m.firstSeenMs === "number") ? m.firstSeenMs : m.sentAtMs;
           var ageHours = (nowMs - originMs) / 3600000;
-          var key = cat + (ageHours >= 5 ? "EnCurso" : "Nuevo");
+          var key = ageHours >= 5 ? pair[1] : pair[0];
           buckets[key].push({ subject: m.subject, ageHours: ageHours, originMs: originMs });
-        } else if (cat === "tareas") {
-          buckets.tareas.push({ subject: m.subject });
-        } else if (cat === "pedidosReferentes") {
-          buckets.pedidosReferentes.push({ subject: m.subject });
-        } else if (cat === "informesFija") {
-          buckets.informesFija.push({ subject: m.subject });
-        } else if (cat === "informesMovil") {
-          buckets.informesMovil.push({ subject: m.subject });
+        } else if (DIRECT_CATEGORY_KEYS.indexOf(cat) !== -1) {
+          if (!(cat in buckets)) return;
+          buckets[cat].push({ subject: m.subject, resolved: m.resolved === true });
+        } else if (cat in buckets) {
+          buckets[cat].push({ subject: m.subject, resolved: m.resolved === true });
         }
       });
     });
@@ -386,29 +419,32 @@
       var accentColor = dark ? "rgba(" + meta.rgb + ",0.95)" : "rgb(" + meta.rgb + ")";
       var softBg = dark ? "rgba(" + meta.rgb + ",0.22)" : "rgba(" + meta.rgb + ",0.12)";
 
+      var big = meta.big === true;
+
       var card = document.createElement("div");
       card.className = "rl-card";
-      card.style.cssText = "border:1px solid var(--card-border);border-radius:16px;padding:18px 20px 19px;background:var(--card-bg);box-shadow:var(--shadow-soft);display:flex;flex-direction:column;";
+      card.style.cssText = "border:1px solid var(--card-border);border-radius:16px;padding:" + (big ? "24px 26px 25px" : "18px 20px 19px") + ";background:var(--card-bg);box-shadow:var(--shadow-soft);display:flex;flex-direction:column;" + (big ? "min-height:150px;" : "");
 
       var head = document.createElement("div");
-      head.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:10px;" + (hasItems ? "margin-bottom:12px;" : "");
+      head.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:10px;" + (hasItems ? "margin-bottom:" + (big ? "16px;" : "12px;") : "");
 
       var titleWrap = document.createElement("div");
-      titleWrap.style.cssText = "display:flex;align-items:center;gap:10px;min-width:0;";
+      titleWrap.style.cssText = "display:flex;align-items:center;gap:" + (big ? "13px" : "10px") + ";min-width:0;";
 
       var iconEl = document.createElement("span");
-      iconEl.style.cssText = "width:30px;height:30px;border-radius:8px;background:" + softBg + ";display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;";
+      var iconSize = big ? 40 : 30;
+      iconEl.style.cssText = "width:" + iconSize + "px;height:" + iconSize + "px;border-radius:" + (big ? 10 : 8) + "px;background:" + softBg + ";display:flex;align-items:center;justify-content:center;font-size:" + (big ? 20 : 15) + "px;flex-shrink:0;";
       iconEl.textContent = meta.icon;
 
       var titleEl = document.createElement("span");
-      titleEl.style.cssText = "font-size:15.5px;font-weight:600;color:var(--text-title);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
+      titleEl.style.cssText = "font-size:" + (big ? "19px" : "15.5px") + ";font-weight:700;color:var(--text-title);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
       titleEl.textContent = meta.label;
 
       titleWrap.appendChild(iconEl);
       titleWrap.appendChild(titleEl);
 
       var badge = document.createElement("span");
-      badge.style.cssText = "font-size:13px;font-weight:700;color:" + (hasItems ? "#fff" : accentColor) + ";background:" + (hasItems ? accentColor : softBg) + ";border-radius:999px;padding:3px 11px;flex-shrink:0;";
+      badge.style.cssText = "font-size:" + (big ? "15px" : "13px") + ";font-weight:700;color:" + (hasItems ? "#fff" : accentColor) + ";background:" + (hasItems ? accentColor : softBg) + ";border-radius:999px;padding:" + (big ? "4px 14px" : "3px 11px") + ";flex-shrink:0;";
       badge.textContent = items.length;
 
       head.appendChild(titleWrap);
@@ -417,7 +453,7 @@
 
       if (hasItems) {
         var list = document.createElement("div");
-        list.style.cssText = "max-height:220px;overflow-y:auto;border-top:1px solid var(--divider);margin-top:2px;padding-top:9px;";
+        list.style.cssText = "max-height:" + (big ? "340px" : "220px") + ";overflow-y:auto;border-top:1px solid var(--divider);margin-top:2px;padding-top:9px;";
         items.forEach(function (item) {
           var row = document.createElement("div");
           row.className = "rl-row";
@@ -577,6 +613,33 @@
     return applyRange(fromMs, toMs, "Últimas " + RESUMEN_WINDOW_HOURS + " horas (en vivo)");
   }
 
+  var currentTareas = null; // { fromMs, toMs, mails }
+
+  async function refreshTareasWindow() {
+    var toMs = Date.now();
+    var fromMs = toMs - RESUMEN_WINDOW_HOURS * 3600000;
+    rangeLineTareasEl.textContent = "Últimas " + RESUMEN_WINDOW_HOURS + " horas (en vivo)  ·  cargando…";
+    var fetched;
+    try {
+      fetched = await fetchMails(fromMs, toMs, { category: "tareas" });
+    } catch (e) {
+      rangeLineTareasEl.textContent = "Error cargando datos: " + e.message;
+      return;
+    }
+    currentTareas = { fromMs: fromMs, toMs: toMs, mails: fetched };
+    renderTareasFromCache();
+  }
+
+  function renderTareasFromCache() {
+    if (!currentTareas) return;
+    var dark = isDark();
+    var buckets = buildBuckets(currentTareas.mails, TAREAS_META);
+    rangeLineTareasEl.textContent = "Últimas " + RESUMEN_WINDOW_HOURS + " horas (en vivo)  ·  rango " +
+      fmt(currentTareas.fromMs) + " → " + fmt(currentTareas.toMs) + "  ·  " +
+      currentTareas.mails.length + (currentTareas.mails.length === 1 ? " mail" : " mails") + lastRunSuffix();
+    renderCards(buckets, dark, cardsTareasEl, TAREAS_META);
+  }
+
   function rerenderCurrent() {
     if (currentRange) {
       var dark = isDark();
@@ -584,6 +647,7 @@
       renderCards(buckets, dark, cardsEl, CATEGORY_META);
     }
     if (currentTab === "escalamientosIT") renderEscalamientosITFromCache();
+    if (currentTab === "tareas") renderTareasFromCache();
     if (currentTab === "lapso") rerenderLapso();
   }
 
@@ -612,6 +676,7 @@
     setInterval(function () {
       refreshResumenWindow();
       if (currentTab === "escalamientosIT") renderEscalamientosIT();
+      if (currentTab === "tareas") refreshTareasWindow();
       fetchLastRun().then(function (value) { lastRunInfo = value; });
     }, RESUMEN_REFRESH_MS);
   }
