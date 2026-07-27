@@ -250,6 +250,8 @@ def _fetch_literal_batch(imap, uids, spec, chunk_size):
                         results[uid_str] = email.message_from_bytes(literal)
                     except Exception:
                         pass
+        if i + chunk_size < len(uid_strs):
+            time.sleep(0.5)  # pequeño respiro entre tandas, evita picos de transferencia
     return results
 
 
@@ -259,10 +261,22 @@ def fetch_headers_batch(imap, uids, chunk_size=150):
     return _fetch_literal_batch(imap, uids, "BODY.PEEK[HEADER]", chunk_size)
 
 
+# Tope de bytes que bajamos por mensaje al pedir el "cuerpo completo". RFC822
+# trae el mensaje entero, imagenes adjuntas incluidas — y varios mails (los
+# informes, por ejemplo) traen hasta 10+ imagenes embebidas que no usamos
+# para nada (get_body_text() descarta todo lo que no sea texto). Bajar esas
+# imagenes por IMAP y despues tirarlas es lo que estaba agotando la cuota de
+# ancho de banda de Gmail. Con un fetch parcial (BODY.PEEK[]<0.N>) solo
+# bajamos los primeros N bytes de cada mensaje: de sobra para encabezados +
+# texto plano, pero cortamos mucho antes de llegar a las imagenes pesadas.
+MAX_MESSAGE_FETCH_BYTES = 150_000
+
+
 def fetch_full_batch(imap, uids, chunk_size=100):
-    """Mensaje completo (con cuerpo) — solo para los UIDs que realmente vamos
-    a clasificar y guardar."""
-    return _fetch_literal_batch(imap, uids, "RFC822", chunk_size)
+    """Primeros MAX_MESSAGE_FETCH_BYTES bytes de cada mensaje (encabezados +
+    texto, sin la parte pesada de adjuntos/imagenes) — para los UIDs que
+    realmente vamos a clasificar y guardar."""
+    return _fetch_literal_batch(imap, uids, f"BODY.PEEK[]<0.{MAX_MESSAGE_FETCH_BYTES}>", chunk_size)
 
 
 def fetch_thrids_batch(imap, uids, chunk_size=150):
