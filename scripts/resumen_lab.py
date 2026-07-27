@@ -47,7 +47,17 @@ IT_RECIPIENT_KEYWORDS = [
 # "Gestion de Incidentes Masivos", etc. (el nombre para mostrar varía según
 # quién firme el mail, aunque la dirección de correo es siempre la misma)
 IT_RECIPIENT_RE = re.compile(r"gesti[oó]n\s+de\s+incidentes?\s+masivos?", re.IGNORECASE)
-IT_RECIPIENT_ADDR_HINTS = ["incidentereportado@claro.com.ar"]
+
+# Las 3 areas de IT (direcciones exactas, segun especifico el usuario):
+#   Gestion de Incidentes -> incidentereportado@claro.com.ar
+#   Help Desk             -> HelpDesk@claro.com.ar
+#   Help Desk Billetera   -> HDBilletera@claro.com.ar
+IT_AREA_ADDR_HINTS = [
+    "incidentereportado@claro.com.ar",
+    "helpdesk@claro.com.ar",
+    "hdbilletera@claro.com.ar",
+]
+IT_RECIPIENT_ADDR_HINTS = IT_AREA_ADDR_HINTS
 ING_RECIPIENT_KEYWORDS = ["soc", "voc", "noc"]
 
 CLOSURE_PATTERNS = [
@@ -64,7 +74,7 @@ MAX_BODY_CHARS = 20000  # tope defensivo, por si algun mail viene con un cuerpo 
 
 # Categorias que necesitan el X-GM-THRID (para agrupar respuestas del mismo
 # hilo a lo largo de corridas / detectar cuanto hace que arranco la cadena).
-CATEGORIES_NEEDING_THRID = {"afectacionMasiva", "it", "ingenieria", "escalamientosIT"}
+CATEGORIES_NEEDING_THRID = {"afectacionMasiva", "it", "ingenieria", "escalamientosIT", "afectacionesMasivasIT"}
 
 
 def log(msg):
@@ -312,6 +322,11 @@ def classify(msg):
     if REPORTES_TECNICA_HINT in sender_addr:
         if is_it_escalation_recipient(recipients_text):
             categories.append("it")
+            # "escalamientosIT" (solapa aparte): mismo mail, misma condicion
+            # (Reportes Tecnica -> alguna de las 3 areas de IT). Antes esta
+            # categoria no exigia remitente especifico; el usuario pidio
+            # restringirla a Reportes Tecnica igual que "it".
+            categories.append("escalamientosIT")
             add_origin_candidates()
         elif any(re.search(r"\b" + re.escape(k) + r"\b", recipients_text) for k in ING_RECIPIENT_KEYWORDS):
             categories.append("ingenieria")
@@ -335,11 +350,18 @@ def classify(msg):
         elif "611" in subject_lower:
             categories.append("informesMovil")
 
-    # 6. "Escalamientos IT": cualquier mail (de cualquier remitente) enviado a
-    # Gestion de Incidentes / Help Desk / Help Desk Billetera. Independiente
-    # de todo lo anterior, puede coexistir con otra categoria del mismo mail.
-    if is_it_escalation_recipient(recipients_text):
-        categories.append("escalamientosIT")
+    # 6. "Afectaciones masivas IT": cadenas NUEVAS enviadas desde alguna de
+    # las 3 areas de IT (Gestion de Incidentes / Help Desk / Help Desk
+    # Billetera) hacia Afectacion Masiva. Es el flujo inverso al de la
+    # categoria "afectacionMasiva" (que es Afectacion Masiva -> nosotros).
+    # Solo cuenta el mail de apertura de cada cadena (is_first_of_chain),
+    # no las respuestas dentro del mismo hilo.
+    if (
+        sender_addr in IT_AREA_ADDR_HINTS
+        and AFECTACION_MASIVA_SENDER in recipients_text
+        and is_first_of_chain(msg)
+    ):
+        categories.append("afectacionesMasivasIT")
         add_origin_candidates()
 
     if not categories:

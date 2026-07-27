@@ -199,6 +199,9 @@
     ];
     if (opts.category) {
       params.push("categories=cs." + encodeURIComponent("{" + opts.category + "}"));
+    } else if (opts.categoriesAny && opts.categoriesAny.length) {
+      // "ov" = overlap: trae mails que tengan AL MENOS UNA de estas categorias.
+      params.push("categories=ov." + encodeURIComponent("{" + opts.categoriesAny.join(",") + "}"));
     }
     var url = SUPABASE_URL + "/rest/v1/mails?" + params.join("&");
     var resp = await fetch(url, {
@@ -482,44 +485,51 @@
     return startShifted + ARG_OFFSET_MS;
   }
 
-  var currentEscIT = null; // { mails, todayStartMs }
+  var currentEscIT = null; // { mails, yestStartMs, yestEndMs }
 
   async function renderEscalamientosIT() {
     var nowMs = Date.now();
     var todayStartMs = startOfArgTodayMs(nowMs);
-    rangeLineEscITEl.textContent = "Hoy  ·  cargando…";
+    var yestStartMs = todayStartMs - 24 * 3600 * 1000;
+    var yestEndMs = todayStartMs; // exclusivo: hasta las 00:00 de hoy
+    rangeLineEscITEl.textContent = "Ayer  ·  cargando…";
 
-    var todays;
+    var mails;
     try {
-      todays = await fetchMails(todayStartMs, nowMs, { category: "escalamientosIT" });
+      mails = await fetchMails(yestStartMs, yestEndMs, { categoriesAny: ["escalamientosIT", "afectacionesMasivasIT"] });
     } catch (e) {
       rangeLineEscITEl.textContent = "Error cargando datos: " + e.message;
       return;
     }
-    currentEscIT = { mails: todays, todayStartMs: todayStartMs };
+    currentEscIT = { mails: mails, yestStartMs: yestStartMs, yestEndMs: yestEndMs };
     renderEscalamientosITFromCache();
   }
 
   function renderEscalamientosITFromCache() {
     if (!currentEscIT) return;
-    var nowMs = Date.now();
-    var todayStartMs = currentEscIT.todayStartMs;
-    var todays = currentEscIT.mails;
+    var yestStartMs = currentEscIT.yestStartMs;
+    var mails = currentEscIT.mails;
     var dark = isDark();
 
     var buckets = { escalamientosITNuevo: [], escalamientosITEnCurso: [], afectacionesMasivasIT: [] };
-    todays.forEach(function (m) {
+    mails.forEach(function (m) {
       var originMs = (typeof m.firstSeenMs === "number") ? m.firstSeenMs : m.sentAtMs;
-      var ageHours = (nowMs - originMs) / 3600000;
-      // "Nuevo" = el problema empezo hoy (mismo dia calendario Argentina).
-      // "En curso" = empezo un dia anterior, pero tuvo actividad hoy.
-      var key = originMs >= todayStartMs ? "escalamientosITNuevo" : "escalamientosITEnCurso";
-      buckets[key].push({ subject: m.subject, ageHours: ageHours, originMs: originMs });
+      var ageHours = (Date.now() - originMs) / 3600000;
+      var cats = m.categories || [];
+      if (cats.indexOf("afectacionesMasivasIT") !== -1) {
+        buckets.afectacionesMasivasIT.push({ subject: m.subject, ageHours: ageHours, originMs: originMs });
+      }
+      if (cats.indexOf("escalamientosIT") !== -1) {
+        // "Nuevo" = la cadena arranco ayer. "En curso" = viene de dias
+        // anteriores a ayer, pero tuvo actividad ayer.
+        var key = originMs >= yestStartMs ? "escalamientosITNuevo" : "escalamientosITEnCurso";
+        buckets[key].push({ subject: m.subject, ageHours: ageHours, originMs: originMs });
+      }
     });
 
-    var todayLabel = new Date(todayStartMs).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
-    rangeLineEscITEl.textContent = "Hoy " + todayLabel + " (00:00 hora Argentina → ahora)  ·  " +
-      todays.length + (todays.length === 1 ? " mail" : " mails") + lastRunSuffix();
+    var yestLabel = new Date(yestStartMs).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
+    rangeLineEscITEl.textContent = "Ayer " + yestLabel + " (día completo, hora Argentina)  ·  " +
+      mails.length + (mails.length === 1 ? " mail" : " mails") + lastRunSuffix();
 
     renderCards(buckets, dark, cardsEscITEl, ESCALAMIENTOS_IT_META);
   }
