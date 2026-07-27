@@ -180,6 +180,15 @@ QUOTED_DATE_RE = re.compile(
 ARG_UTC_OFFSET_MS = 3 * 3600 * 1000  # Argentina es UTC-3, sin horario de verano
 
 
+def arg_calendar_date_str(ms):
+    """Fecha calendario (YYYY-MM-DD) en horario Argentina para un ms epoch
+    UTC dado. Se usa para registrar en que dia calendario (Argentina) hubo
+    actividad de un mail/hilo, sin importar si la cadena sigue mas adelante."""
+    dt_utc = datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+    dt_arg = dt_utc - timedelta(hours=3)
+    return dt_arg.strftime("%Y-%m-%d")
+
+
 def earliest_quoted_date_ms(body):
     """Busca fechas de mensajes citados (encabezados 'Enviado: ...' que Outlook
     agrega al citar respuestas previas) y devuelve la mas antigua encontrada,
@@ -431,6 +440,13 @@ class SupabaseClient:
         }
         self._request("POST", "/rest/v1/rpc/upsert_mail", {"payload": payload})
 
+    def record_activity(self, record_id, category, date_str):
+        self._request("POST", "/rest/v1/rpc/record_mail_activity", {
+            "p_id": record_id,
+            "p_category": category,
+            "p_date": date_str,
+        })
+
     def set_meta(self, key, value):
         self._request("POST", "/rest/v1/rpc/set_meta", {"p_key": key, "p_value": value})
 
@@ -515,8 +531,13 @@ def process_candidate_uids(imap, sb, uids, window_start_ms=None, window_end_ms=N
             continue
         thrid = thrids.get(uid_str)
         record_id = thrid or f"uid-{uid_str}"
+        activity_date = arg_calendar_date_str(result["sent_at_ms"])
         for category in result["categories"]:
             sb.upsert_mail(record_id, thrid, category, result, result["sent_at_ms"])
+            try:
+                sb.record_activity(record_id, category, activity_date)
+            except Exception as e:
+                log(f"[activity] no se pudo registrar {record_id}/{category}/{activity_date}: {type(e).__name__}: {e}")
         processed += 1
 
     return processed

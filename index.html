@@ -212,6 +212,34 @@
     return rows.map(normalizeRow);
   }
 
+  async function fetchActivityMails(dateStr, categoriesList) {
+    // Usa la tabla mail_activity (historial de en que dia hubo actividad de
+    // cada hilo) en vez de filtrar "mails" por sent_at — asi un hilo que
+    // tuvo actividad ayer sigue apareciendo en la vista de "ayer" aunque
+    // despues haya seguido la cadena hoy (sent_at ya no queda "en ayer").
+    var params = [
+      "select=category,mails(subject,sent_at,first_seen_at,closure_detected)",
+      "activity_date=eq." + encodeURIComponent(dateStr),
+      "category=in.(" + categoriesList.join(",") + ")"
+    ];
+    var url = SUPABASE_URL + "/rest/v1/mail_activity?" + params.join("&");
+    var resp = await fetch(url, {
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + SUPABASE_ANON_KEY }
+    });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    var rows = await resp.json();
+    return rows.map(function (r) {
+      var m = r.mails || {};
+      return {
+        category: r.category,
+        subject: m.subject,
+        sentAtMs: m.sent_at ? Date.parse(m.sent_at) : null,
+        firstSeenMs: m.first_seen_at ? Date.parse(m.first_seen_at) : null,
+        resolved: m.closure_detected === true
+      };
+    });
+  }
+
   async function fetchLastRun() {
     try {
       var url = SUPABASE_URL + "/rest/v1/meta?key=eq.last_run&select=value";
@@ -479,57 +507,66 @@
 
   var ARG_OFFSET_MS = 3 * 3600 * 1000; // Argentina es UTC-3 fijo
 
+  function argDateStr(ms) {
+    var shifted = new Date(ms - ARG_OFFSET_MS);
+    var y = shifted.getUTCFullYear();
+    var m = String(shifted.getUTCMonth() + 1).padStart(2, "0");
+    var d = String(shifted.getUTCDate()).padStart(2, "0");
+    return y + "-" + m + "-" + d;
+  }
+
   function startOfArgTodayMs(nowMs) {
     var shifted = new Date(nowMs - ARG_OFFSET_MS);
     var startShifted = Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate(), 0, 0, 0, 0);
     return startShifted + ARG_OFFSET_MS;
   }
 
-  var currentEscIT = null; // { mails, yestStartMs, yestEndMs }
+  var currentEscIT = null; // { rows, yestStartMs, yestDateStr }
 
   async function renderEscalamientosIT() {
     var nowMs = Date.now();
     var todayStartMs = startOfArgTodayMs(nowMs);
     var yestStartMs = todayStartMs - 24 * 3600 * 1000;
-    var yestEndMs = todayStartMs; // exclusivo: hasta las 00:00 de hoy
+    var yestDateStr = argDateStr(yestStartMs);
     rangeLineEscITEl.textContent = "Ayer  ·  cargando…";
 
-    var mails;
+    var rows;
     try {
-      mails = await fetchMails(yestStartMs, yestEndMs, { categoriesAny: ["escalamientosIT", "afectacionesMasivasIT"] });
+      rows = await fetchActivityMails(yestDateStr, ["escalamientosIT", "afectacionesMasivasIT"]);
     } catch (e) {
       rangeLineEscITEl.textContent = "Error cargando datos: " + e.message;
       return;
     }
-    currentEscIT = { mails: mails, yestStartMs: yestStartMs, yestEndMs: yestEndMs };
+    currentEscIT = { rows: rows, yestStartMs: yestStartMs, yestDateStr: yestDateStr };
     renderEscalamientosITFromCache();
   }
 
   function renderEscalamientosITFromCache() {
     if (!currentEscIT) return;
     var yestStartMs = currentEscIT.yestStartMs;
-    var mails = currentEscIT.mails;
+    var rows = currentEscIT.rows;
     var dark = isDark();
 
+    // Cada fila de mail_activity ya viene atada a UNA categoria puntual (la
+    // tabla se llena una vez por dia/categoria/hilo), asi que un hilo que
+    // tuvo actividad ayer sigue apareciendo aca aunque hoy haya seguido.
     var buckets = { escalamientosITNuevo: [], escalamientosITEnCurso: [], afectacionesMasivasIT: [] };
-    mails.forEach(function (m) {
-      var originMs = (typeof m.firstSeenMs === "number") ? m.firstSeenMs : m.sentAtMs;
+    rows.forEach(function (r) {
+      var originMs = (typeof r.firstSeenMs === "number") ? r.firstSeenMs : r.sentAtMs;
       var ageHours = (Date.now() - originMs) / 3600000;
-      var cats = m.categories || [];
-      if (cats.indexOf("afectacionesMasivasIT") !== -1) {
-        buckets.afectacionesMasivasIT.push({ subject: m.subject, ageHours: ageHours, originMs: originMs });
-      }
-      if (cats.indexOf("escalamientosIT") !== -1) {
+      if (r.category === "afectacionesMasivasIT") {
+        buckets.afectacionesMasivasIT.push({ subject: r.subject, ageHours: ageHours, originMs: originMs });
+      } else if (r.category === "escalamientosIT") {
         // "Nuevo" = la cadena arranco ayer. "En curso" = viene de dias
         // anteriores a ayer, pero tuvo actividad ayer.
         var key = originMs >= yestStartMs ? "escalamientosITNuevo" : "escalamientosITEnCurso";
-        buckets[key].push({ subject: m.subject, ageHours: ageHours, originMs: originMs });
+        buckets[key].push({ subject: r.subject, ageHours: ageHours, originMs: originMs });
       }
     });
 
     var yestLabel = new Date(yestStartMs).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
     rangeLineEscITEl.textContent = "Ayer " + yestLabel + " (día completo, hora Argentina)  ·  " +
-      mails.length + (mails.length === 1 ? " mail" : " mails") + lastRunSuffix();
+      rows.length + (rows.length === 1 ? " mail" : " mails") + lastRunSuffix();
 
     renderCards(buckets, dark, cardsEscITEl, ESCALAMIENTOS_IT_META);
   }
