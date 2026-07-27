@@ -131,7 +131,7 @@
   </div>
 
   <div id="cards" style="display:grid;grid-template-columns:1fr 1fr;gap:18px;"></div>
-  <div id="cardsEscIT" style="display:none;grid-template-columns:1fr 1fr;gap:18px;"></div>
+  <div id="cardsEscIT" style="display:none;grid-template-columns:1fr;gap:18px;"></div>
   <div id="cardsLapso" style="display:none;grid-template-columns:1fr 1fr;gap:18px;"></div>
 
 </div>
@@ -242,7 +242,8 @@
   // enviado a Gestion de Incidentes / Help Desk / Help Desk Billetera.
   var ESCALAMIENTOS_IT_META = [
     { key: "escalamientosITNuevo", label: "Escalamientos IT · Nuevo", icon: "🚦", rgb: "214,127,17" },
-    { key: "escalamientosITEnCurso", label: "Escalamientos IT · En curso", icon: "🔥", rgb: "214,127,17" }
+    { key: "escalamientosITEnCurso", label: "Escalamientos IT · En curso", icon: "🔥", rgb: "214,127,17" },
+    { key: "afectacionesMasivasIT", label: "Afectaciones masivas IT", icon: "🚨", rgb: "216,71,47" }
   ];
 
   // La solapa "Resumen" siempre muestra una ventana viva de las ultimas 6
@@ -506,7 +507,7 @@
     var todays = currentEscIT.mails;
     var dark = isDark();
 
-    var buckets = { escalamientosITNuevo: [], escalamientosITEnCurso: [] };
+    var buckets = { escalamientosITNuevo: [], escalamientosITEnCurso: [], afectacionesMasivasIT: [] };
     todays.forEach(function (m) {
       var originMs = (typeof m.firstSeenMs === "number") ? m.firstSeenMs : m.sentAtMs;
       var ageHours = (nowMs - originMs) / 3600000;
