@@ -427,30 +427,118 @@ class SupabaseClient:
         return None
 
 
-def main():
-    gmail_user = os.environ.get("GMAIL_USER")
-    gmail_pass = os.environ.get("GMAIL_APP_PASSWORD")
-    supabase_url = os.environ.get("SUPABASE_URL")
-    supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
-    now_ms = int(time.time() * 1000)
+def process_candidate_uids(imap, sb, uids, window_start_ms=None, window_end_ms=None, prefilter_headers=False):
+    """Clasifica y guarda en Supabase una lista de UIDs candidatos (ya
+    ordenados o no). Si prefilter_headers=True, primero chequea la fecha via
+    encabezado liviano (sin cuerpo) y descarta lo que cae fuera de
+    [window_start_ms, window_end_ms] ANTES de bajar el mensaje completo —
+    asi evita pagar el costo de RFC822 para mails que se van a descartar de
+    todas formas. Devuelve la cantidad de mails guardados (con >=1 categoria).
+    Puede tirar una excepcion si algun fetch en lote falla (el llamador
+    decide que hacer con el checkpoint en ese caso)."""
+    if not uids:
+        return 0
 
-    missing = [
-        name for name, val in [
-            ("GMAIL_USER", gmail_user), ("GMAIL_APP_PASSWORD", gmail_pass),
-            ("SUPABASE_URL", supabase_url), ("SUPABASE_SERVICE_ROLE_KEY", supabase_key),
-        ] if not val
-    ]
-    if missing:
-        log(f"ERROR: faltan variables de entorno: {', '.join(missing)}")
-        sys.exit(0)
+    uids_sorted = sorted(uids, key=lambda u: int(_uid_str(u)))
 
-    sb = SupabaseClient(supabase_url, supabase_key)
+    if prefilter_headers:
+        headers = fetch_headers_batch(imap, uids_sorted)
+        fetch_targets = []
+        for u in uids_sorted:
+            uid_str = _uid_str(u)
+            hmsg = headers.get(uid_str)
+            if hmsg is None:
+                continue
+            h_ms = epoch_ms_from_date_header(hmsg)
+            if h_ms is None:
+                continue
+            if window_start_ms is not None and h_ms < window_start_ms:
+                continue
+            if window_end_ms is not None and h_ms > window_end_ms:
+                continue
+            fetch_targets.append(u)
+        log(f"Dentro de ventana tras chequear encabezados: {len(fetch_targets)}")
+    else:
+        fetch_targets = uids_sorted
 
-    # Checkpoint por UID (no por fecha): mucho mas rapido que SINCE, que solo
-    # filtra por dia y obliga a re-escanear TODO el dia en cada corrida. Con
-    # UID, le pedimos a Gmail directamente "lo que tenga UID mayor a X", que
-    # es instantaneo y ademas nunca se pierde nada (no depende de husos
-    # horarios ni de que una corrida anterior haya fallado a mitad de camino).
+    full_msgs = fetch_full_batch(imap, fetch_targets)
+
+    results_by_uid = {}
+    for u in fetch_targets:
+        uid_str = _uid_str(u)
+        msg = full_msgs.get(uid_str)
+        if msg is None:
+            continue
+        result = classify(msg)
+        if result is not None:
+            results_by_uid[uid_str] = result
+
+    needing_thrid = [uid_str for uid_str, r in results_by_uid.items() if r["needs_thrid"]]
+    thrids = fetch_thrids_batch(imap, needing_thrid) if needing_thrid else {}
+
+    processed = 0
+    for u in fetch_targets:
+        uid_str = _uid_str(u)
+        result = results_by_uid.get(uid_str)
+        if result is None:
+            continue
+        thrid = thrids.get(uid_str)
+        record_id = thrid or f"uid-{uid_str}"
+        for category in result["categories"]:
+            sb.upsert_mail(record_id, thrid, category, result, result["sent_at_ms"])
+        processed += 1
+
+    return processed
+
+
+def run_backfill(sb, gmail_user, gmail_pass, now_ms, backfill_hours):
+    """Barrido UNICO por fecha (SINCE), pensado para completar historial que
+    el checkpoint de UID de las corridas en vivo ya dejo atras. A proposito
+    NO toca 'last_uid' ni 'last_run': es independiente de la maquinaria
+    incremental, para no arriesgar el estado de las corridas automaticas."""
+    error_msg = None
+    processed = 0
+    try:
+        imap = imaplib.IMAP4_SSL(IMAP_HOST, timeout=25)
+        imap.login(gmail_user, gmail_pass)
+        imap.select("INBOX")
+
+        window_start_ms = now_ms - int(backfill_hours * 3600 * 1000)
+        since_dt = datetime.fromtimestamp(window_start_ms / 1000, tz=timezone.utc) - timedelta(days=1)
+        since_date = since_dt.strftime("%d-%b-%Y")
+        typ, data_uids = imap.uid("search", None, f"(SINCE {since_date})")
+        uids = data_uids[0].split() if typ == "OK" and data_uids and data_uids[0] else []
+        log(f"[BACKFILL] Candidatos (SINCE {since_date}, ultimas {backfill_hours}h): {len(uids)}")
+
+        processed = process_candidate_uids(
+            imap, sb, uids,
+            window_start_ms=window_start_ms,
+            window_end_ms=now_ms + 5 * 60 * 1000,
+            prefilter_headers=True,
+        )
+        imap.logout()
+    except Exception as e:
+        error_msg = f"{type(e).__name__}: {e}"
+        log(f"[BACKFILL] ERROR: {error_msg}")
+
+    try:
+        sb.set_meta("last_backfill", {
+            "timestamp": now_ms,
+            "hours": backfill_hours,
+            "processed": processed,
+            "error": error_msg,
+        })
+    except Exception as e:
+        log(f"[BACKFILL] No se pudo guardar el estado: {type(e).__name__}: {e}")
+
+    log(f"[BACKFILL] Listo. Mails procesados: {processed}.")
+    if error_msg:
+        log(f"[BACKFILL] Con errores: {error_msg}")
+
+
+def run_incremental(sb, gmail_user, gmail_pass, now_ms):
+    """Corrida normal: incremental por UID una vez que existe checkpoint, o
+    bootstrap acotado (MAX_LOOKBACK_MS) la primera vez que corre el proyecto."""
     last_uid = None
     try:
         raw_last_uid = sb.get_meta("last_uid")
@@ -459,10 +547,6 @@ def main():
     except Exception as e:
         log(f"No se pudo leer el ultimo checkpoint (last_uid) de la base: {type(e).__name__}: {e}")
 
-    # Tope maximo de cuanto se puede volver hacia atras SOLO cuando todavia no
-    # hay ningun checkpoint de UID guardado (primera corrida de la vida del
-    # proyecto, o si se reseteo la base). Una vez que exista un last_uid, cada
-    # corrida es puramente incremental y este limite ya no aplica.
     MAX_LOOKBACK_MS = 60 * 60 * 1000
 
     error_msg = None
@@ -475,78 +559,27 @@ def main():
         imap.select("INBOX")
 
         if last_uid is not None:
-            # Corrida incremental: solo lo nuevo desde el ultimo UID visto.
             typ, data_uids = imap.uid("search", None, f"(UID {last_uid + 1}:*)")
             uids = data_uids[0].split() if typ == "OK" and data_uids and data_uids[0] else []
-            # Gmail puede devolver el propio last_uid de nuevo si no hay nada
-            # mas nuevo (comportamiento de "N:*" en IMAP); lo filtramos.
             uids = [u for u in uids if int(_uid_str(u)) > last_uid]
             log(f"Candidatos nuevos (UID > {last_uid}): {len(uids)}")
+            processed = process_candidate_uids(imap, sb, uids, prefilter_headers=False)
         else:
-            # Primera corrida: todavia no hay checkpoint de UID. Usamos SINCE
-            # acotado por MAX_LOOKBACK_MS como arranque UNICO; de aca en mas
-            # todas las corridas van a ser por UID (rapidas de verdad).
             search_window_start = now_ms - MAX_LOOKBACK_MS
             since_dt = datetime.fromtimestamp(search_window_start / 1000, tz=timezone.utc) - timedelta(days=1)
             since_date = since_dt.strftime("%d-%b-%Y")
             typ, data_uids = imap.uid("search", None, f"(SINCE {since_date})")
             uids = data_uids[0].split() if typ == "OK" and data_uids and data_uids[0] else []
             log(f"Primera corrida (sin checkpoint de UID) - candidatos (SINCE {since_date}): {len(uids)}")
+            processed = process_candidate_uids(
+                imap, sb, uids,
+                window_start_ms=search_window_start,
+                window_end_ms=now_ms + 5 * 60 * 1000,
+                prefilter_headers=True,
+            )
 
         if uids:
-            uids_sorted = sorted(uids, key=lambda u: int(_uid_str(u)))
-
-            if last_uid is None:
-                # Modo bootstrap: primero los encabezados (en lote, barato),
-                # para descartar lo que cae fuera de la ventana ANTES de
-                # bajar el cuerpo completo de cada mail.
-                headers = fetch_headers_batch(imap, uids_sorted)
-                in_window_uids = []
-                for u in uids_sorted:
-                    uid_str = _uid_str(u)
-                    hmsg = headers.get(uid_str)
-                    if hmsg is None:
-                        continue
-                    h_ms = epoch_ms_from_date_header(hmsg)
-                    if h_ms is None:
-                        continue
-                    if (now_ms - MAX_LOOKBACK_MS) <= h_ms <= now_ms + 5 * 60 * 1000:
-                        in_window_uids.append(u)
-                log(f"Dentro de ventana tras chequear encabezados: {len(in_window_uids)}")
-                fetch_targets = in_window_uids
-            else:
-                fetch_targets = uids_sorted
-
-            full_msgs = fetch_full_batch(imap, fetch_targets)
-
-            results_by_uid = {}
-            for u in fetch_targets:
-                uid_str = _uid_str(u)
-                msg = full_msgs.get(uid_str)
-                if msg is None:
-                    continue
-                result = classify(msg)
-                if result is not None:
-                    results_by_uid[uid_str] = result
-
-            needing_thrid = [uid_str for uid_str, r in results_by_uid.items() if r["needs_thrid"]]
-            thrids = fetch_thrids_batch(imap, needing_thrid) if needing_thrid else {}
-
-            for u in fetch_targets:
-                uid_str = _uid_str(u)
-                result = results_by_uid.get(uid_str)
-                if result is None:
-                    continue
-                thrid = thrids.get(uid_str)
-                record_id = thrid or f"uid-{uid_str}"
-                for category in result["categories"]:
-                    sb.upsert_mail(record_id, thrid, category, result, result["sent_at_ms"])
-                processed += 1
-
-            # Todo el lote se proceso sin excepciones: el checkpoint avanza
-            # hasta el UID mas alto que vimos (aunque algunos hayan quedado
-            # fuera de ventana o sin categoria, ya los "vimos").
-            max_ok_uid = int(_uid_str(uids_sorted[-1]))
+            max_ok_uid = int(_uid_str(max(uids, key=lambda u: int(_uid_str(u)))))
 
         imap.logout()
     except Exception as e:
@@ -572,6 +605,37 @@ def main():
     log(f"Listo. Mails procesados: {processed}.")
     if error_msg:
         log(f"Con errores: {error_msg}")
+
+
+def main():
+    gmail_user = os.environ.get("GMAIL_USER")
+    gmail_pass = os.environ.get("GMAIL_APP_PASSWORD")
+    supabase_url = os.environ.get("SUPABASE_URL")
+    supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    now_ms = int(time.time() * 1000)
+
+    missing = [
+        name for name, val in [
+            ("GMAIL_USER", gmail_user), ("GMAIL_APP_PASSWORD", gmail_pass),
+            ("SUPABASE_URL", supabase_url), ("SUPABASE_SERVICE_ROLE_KEY", supabase_key),
+        ] if not val
+    ]
+    if missing:
+        log(f"ERROR: faltan variables de entorno: {', '.join(missing)}")
+        sys.exit(0)
+
+    sb = SupabaseClient(supabase_url, supabase_key)
+
+    backfill_hours_raw = (os.environ.get("BACKFILL_HOURS") or "").strip()
+    if backfill_hours_raw:
+        try:
+            backfill_hours = float(backfill_hours_raw)
+            run_backfill(sb, gmail_user, gmail_pass, now_ms, backfill_hours)
+            return
+        except ValueError:
+            log(f"BACKFILL_HOURS invalido: {backfill_hours_raw!r}, se ignora y corre normal")
+
+    run_incremental(sb, gmail_user, gmail_pass, now_ms)
 
 
 if __name__ == "__main__":

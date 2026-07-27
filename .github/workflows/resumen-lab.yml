@@ -5,7 +5,16 @@ on:
   # solo despues de las primeras corridas) y ademas podia solaparse con el
   # disparador externo y matar corridas a mitad de camino. El unico disparador
   # automatico es el externo (cron-job.org, cada 30 min via workflow_dispatch).
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      backfill_hours:
+        description: >-
+          Dejar vacio para la corrida normal (incremental por UID). Poner un
+          numero (ej. 24) para hacer un barrido unico de las ultimas N horas
+          por fecha, SIN tocar el checkpoint de las corridas en vivo — sirve
+          para completar historial que el checkpoint ya dejo atras.
+        required: false
+        default: ""
 
 concurrency:
   group: resumen-lab-update
@@ -31,4 +40,5 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          BACKFILL_HOURS: ${{ github.event.inputs.backfill_hours }}
         run: python scripts/resumen_lab.py
