@@ -473,18 +473,34 @@ def main():
         for uid in uids:
             uid_int = int(uid.decode() if isinstance(uid, bytes) else uid)
             try:
+                if last_uid is None:
+                    # Modo bootstrap: SINCE trae candidatos de todo un dia, asi
+                    # que primero miramos solo el encabezado (barato) para
+                    # descartar los que caen fuera de la ventana ANTES de
+                    # bajar el cuerpo completo.
+                    header_msg = fetch_header_only(imap, uid)
+                    if header_msg is None:
+                        raise RuntimeError("no se pudo bajar el encabezado")
+                    header_own_ms = epoch_ms_from_date_header(header_msg)
+                    out_of_window = (
+                        header_own_ms is None
+                        or header_own_ms < (now_ms - MAX_LOOKBACK_MS)
+                        or header_own_ms > now_ms + 5 * 60 * 1000
+                    )
+                    if out_of_window:
+                        if not skipped_due_to_error:
+                            max_ok_uid = uid_int
+                        continue
+
+                # Modo incremental (o bootstrap ya dentro de ventana): bajamos
+                # el mensaje completo, que es lo unico que hace falta para
+                # clasificar.
                 msg = fetch_message(imap, uid)
                 if msg is None:
                     raise RuntimeError("no se pudo bajar el mensaje completo")
 
                 own_ms = epoch_ms_from_date_header(msg)
-                in_bootstrap_window = (
-                    last_uid is not None
-                    or own_ms is None
-                    or (now_ms - MAX_LOOKBACK_MS) <= own_ms <= now_ms + 5 * 60 * 1000
-                )
-
-                if in_bootstrap_window and own_ms is not None:
+                if own_ms is not None:
                     result = classify(imap, uid, msg)
                     if result is not None:
                         uid_str = uid.decode() if isinstance(uid, bytes) else uid
