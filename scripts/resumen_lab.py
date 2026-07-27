@@ -422,66 +422,85 @@ def main():
 
     sb = SupabaseClient(supabase_url, supabase_key)
 
-    last_max_sent_ms = None
+    # Checkpoint por UID (no por fecha): mucho mas rapido que SINCE, que solo
+    # filtra por dia y obliga a re-escanear TODO el dia en cada corrida. Con
+    # UID, le pedimos a Gmail directamente "lo que tenga UID mayor a X", que
+    # es instantaneo y ademas nunca se pierde nada (no depende de husos
+    # horarios ni de que una corrida anterior haya fallado a mitad de camino).
+    last_uid = None
     try:
-        last_max_sent_ms = sb.max_sent_at_ms()
+        raw_last_uid = sb.get_meta("last_uid")
+        if raw_last_uid is not None:
+            last_uid = int(raw_last_uid)
     except Exception as e:
-        log(f"No se pudo leer el ultimo checkpoint de la base: {type(e).__name__}: {e}")
+        log(f"No se pudo leer el ultimo checkpoint (last_uid) de la base: {type(e).__name__}: {e}")
 
-    range_from = last_max_sent_ms or (now_ms - 6 * 3600 * 1000)
-    # Tope maximo de cuanto se puede volver hacia atras, sin importar que tan
-    # vieja sea la ultima fecha guardada. Evita que una corrida fallida deje
-    # un backlog enorme que nunca se puede terminar de procesar.
+    # Tope maximo de cuanto se puede volver hacia atras SOLO quando todavia no
+    # hay ningun checkpoint de UID guardado (primera corrida de la vida del
+    # proyecto, o si se reseteo la base). Una vez que exista un last_uid, cada
+    # corrida es puramente incremental y este limite ya no aplica.
     MAX_LOOKBACK_MS = 60 * 60 * 1000
-    search_window_start = max(range_from, now_ms - MAX_LOOKBACK_MS)
 
     error_msg = None
     processed = 0
     skipped_due_to_error = False
+    max_ok_uid = last_uid  # se va a ir subiendo a medida que confirmamos exito
 
     try:
         imap = imaplib.IMAP4_SSL(IMAP_HOST, timeout=25)
         imap.login(gmail_user, gmail_pass)
         imap.select("INBOX")
 
-        # IMAP SINCE solo filtra por fecha (sin hora), asi que restamos 1 dia
-        # de colchon sobre el inicio real de la ventana para no perder nada
-        # por husos horarios.
-        since_dt = datetime.fromtimestamp(search_window_start / 1000, tz=timezone.utc) - timedelta(days=1)
-        since_date = since_dt.strftime("%d-%b-%Y")
-        typ, data_uids = imap.uid("search", None, f"(SINCE {since_date})")
-        uids = data_uids[0].split() if typ == "OK" and data_uids and data_uids[0] else []
-        log(f"Candidatos encontrados (SINCE {since_date}): {len(uids)}")
+        if last_uid is not None:
+            # Corrida incremental: solo lo nuevo desde el ultimo UID visto.
+            typ, data_uids = imap.uid("search", None, f"(UID {last_uid + 1}:*)")
+            uids = data_uids[0].split() if typ == "OK" and data_uids and data_uids[0] else []
+            # Gmail puede devolver el propio last_uid de nuevo si no hay nada
+            # mas nuevo (comportamiento de "N:*" en IMAP); lo filtramos.
+            uids = [u for u in uids if int(u.decode() if isinstance(u, bytes) else u) > last_uid]
+            log(f"Candidatos nuevos (UID > {last_uid}): {len(uids)}")
+        else:
+            # Primera corrida: todavia no hay checkpoint de UID. Usamos SINCE
+            # acotado por MAX_LOOKBACK_MS como arranque UNICO; de aca en mas
+            # todas las corridas van a ser por UID (rapidas de verdad).
+            search_window_start = now_ms - MAX_LOOKBACK_MS
+            since_dt = datetime.fromtimestamp(search_window_start / 1000, tz=timezone.utc) - timedelta(days=1)
+            since_date = since_dt.strftime("%d-%b-%Y")
+            typ, data_uids = imap.uid("search", None, f"(SINCE {since_date})")
+            uids = data_uids[0].split() if typ == "OK" and data_uids and data_uids[0] else []
+            log(f"Primera corrida (sin checkpoint de UID) - candidatos (SINCE {since_date}): {len(uids)}")
 
         for uid in uids:
+            uid_int = int(uid.decode() if isinstance(uid, bytes) else uid)
             try:
-                # Paso 1: solo el encabezado, para chequear la fecha barato.
-                # SINCE es de granularidad diaria, asi que trae candidatos de
-                # todo un dia; sin este paso, se bajaba el mail ENTERO (cuerpo
-                # incluido) solo para descartarlo despues por la fecha.
-                header_msg = fetch_header_only(imap, uid)
-                if header_msg is None:
-                    continue
-                own_ms = epoch_ms_from_date_header(header_msg)
-                if own_ms is None or own_ms < search_window_start or own_ms > now_ms + 5 * 60 * 1000:
-                    continue
-
-                # Paso 2: recien aca bajamos el mail completo (con cuerpo),
-                # solo para los que realmente caen dentro de la ventana.
                 msg = fetch_message(imap, uid)
                 if msg is None:
-                    continue
+                    raise RuntimeError("no se pudo bajar el mensaje completo")
 
-                result = classify(imap, uid, msg)
-                if result is None:
-                    continue
+                own_ms = epoch_ms_from_date_header(msg)
+                in_bootstrap_window = (
+                    last_uid is not None
+                    or own_ms is None
+                    or (now_ms - MAX_LOOKBACK_MS) <= own_ms <= now_ms + 5 * 60 * 1000
+                )
 
-                uid_str = uid.decode() if isinstance(uid, bytes) else uid
-                record_id = result["thread_id"] or f"uid-{uid_str}"
+                if in_bootstrap_window and own_ms is not None:
+                    result = classify(imap, uid, msg)
+                    if result is not None:
+                        uid_str = uid.decode() if isinstance(uid, bytes) else uid
+                        record_id = result["thread_id"] or f"uid-{uid_str}"
+                        for category in result["categories"]:
+                            sb.upsert_mail(record_id, result["thread_id"], category, result, own_ms)
+                        processed += 1
 
-                for category in result["categories"]:
-                    sb.upsert_mail(record_id, result["thread_id"], category, result, own_ms)
-                processed += 1
+                # Si no hubo ninguna falla hasta ahora, este UID queda
+                # confirmado como "visto" y el checkpoint puede avanzar hasta
+                # aca. Si algo fallo antes, dejamos de avanzar para poder
+                # reintentar ese mail en la proxima corrida (los que vengan
+                # despues, si se procesan bien igual, no hacen dano: el
+                # upsert es idempotente).
+                if not skipped_due_to_error:
+                    max_ok_uid = uid_int
             except Exception as e:
                 skipped_due_to_error = True
                 log(f"[uid={uid}] error procesando, se saltea: {type(e).__name__}: {e}")
@@ -494,10 +513,16 @@ def main():
         error_msg = f"{type(e).__name__}: {e}"
         log(f"ERROR durante la corrida: {error_msg}")
 
+    if max_ok_uid is not None and max_ok_uid != last_uid:
+        try:
+            sb.set_meta("last_uid", max_ok_uid)
+        except Exception as e:
+            log(f"No se pudo guardar el checkpoint de UID: {type(e).__name__}: {e}")
+
     try:
         sb.set_meta("last_run", {
             "timestamp": now_ms,
-            "rangeFrom": range_from,
+            "lastUid": max_ok_uid,
             "processed": processed,
             "error": error_msg,
         })
