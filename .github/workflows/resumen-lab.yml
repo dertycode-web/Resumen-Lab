@@ -2,12 +2,10 @@ name: Resumen LAB - actualizar mails
 
 on:
   schedule:
-    # cada 15 minutos (mas confiable que 5 min, que GitHub tiende a saltear)
+    # cada 15 minutos (el disparador externo de cron-job.org tambien pega
+    # cada tanto via workflow_dispatch, este queda como respaldo)
     - cron: '*/15 * * * *'
   workflow_dispatch: {}
-
-permissions:
-  contents: write
 
 concurrency:
   group: resumen-lab-update
@@ -16,7 +14,7 @@ concurrency:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 4
     steps:
       - uses: actions/checkout@v4
 
@@ -28,16 +26,6 @@ jobs:
         env:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: python scripts/resumen_lab.py
-
-      - name: Commit y push si hubo cambios
-        run: |
-          git config user.name "resumen-lab-bot"
-          git config user.email "actions@users.noreply.github.com"
-          git add index.html
-          if git diff --cached --quiet; then
-            echo "Sin cambios para commitear."
-          else
-            git commit -m "Corrida automática $(date -u +'%Y-%m-%d %H:%M UTC')"
-            git push
-          fi

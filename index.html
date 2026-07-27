@@ -141,124 +141,10 @@
   </p>
 </div>
 
-<script id="resumen-data" type="application/json">
+<script id="supabase-config" type="application/json">
 {
-  "mails": [
-    {
-      "id": "19f8fe209a44476f",
-      "timestamp": 1784825528000,
-      "subject": "RE: AUTODETECCIÓN | Afectación masiva GPON | EMERGENCIA | OLTs afectadas: BA213-GP-04",
-      "category": "ingenieria",
-      "firstSeen": 1784825340000
-    },
-    {
-      "id": "uid-54",
-      "timestamp": 1784824260000,
-      "subject": "Informe 611 Técnico de 10 a 12hs",
-      "category": "informesMovil"
-    },
-    {
-      "id": "19f8f9ffd17f1c92",
-      "timestamp": 1784821893000,
-      "subject": "RE: Inconveniente con avaya",
-      "category": "it",
-      "firstSeen": 1784821020000
-    },
-    {
-      "id": "19f8f9ffd17f1c92:escIT",
-      "timestamp": 1784821893000,
-      "subject": "RE: Inconveniente con avaya",
-      "category": "escalamientosIT",
-      "firstSeen": 1784821020000
-    },
-    {
-      "id": "uid-44",
-      "timestamp": 1784821170000,
-      "subject": "Informe Fija de 11 a 12hs",
-      "category": "informesFija"
-    },
-    {
-      "id": "uid-34",
-      "timestamp": 1784819859000,
-      "subject": "RE: PEC NO MUESTRA LEYENDA DE SOLUCION",
-      "category": "pedidosReferentes"
-    },
-    {
-      "id": "uid-33",
-      "timestamp": 1784819333000,
-      "subject": "Notif. Ventana Trabajo || SERVICIOS MASIVOS - Argentina || ALTA/BAJA/REEMPLAZO DE HW || 2026-07-28 02:00Hs GMT-3",
-      "category": "tareas"
-    },
-    {
-      "id": "19f8f559f1a0ee79",
-      "timestamp": 1784817485000,
-      "subject": "RE: Sitios sin leyenda \"Fecha de Solución\" - PEC",
-      "category": "it",
-      "firstSeen": 1783022940000
-    },
-    {
-      "id": "19f8f559f1a0ee79:escIT",
-      "timestamp": 1784817485000,
-      "subject": "RE: Sitios sin leyenda \"Fecha de Solución\" - PEC",
-      "category": "escalamientosIT",
-      "firstSeen": 1783022940000
-    },
-    {
-      "id": "uid-23",
-      "timestamp": 1784815788000,
-      "subject": "Notif. Ventana Trabajo || SERVICIOS MASIVOS - Argentina || ALTA/BAJA/REEMPLAZO DE HW || 2026-07-28 06:00Hs GMT-3",
-      "category": "tareas"
-    },
-    {
-      "id": "uid-21",
-      "timestamp": 1784815684000,
-      "subject": "Informe Fija de 10 a 11hs",
-      "category": "informesFija"
-    },
-    {
-      "id": "uid-19",
-      "timestamp": 1784814978000,
-      "subject": "Reprogramación Ventana Trabajo || SERVICIOS MASIVOS - Paraguay || CONFIGURACION DWDM || 2026-07-28 02:00Hs GMT-3",
-      "category": "tareas"
-    },
-    {
-      "id": "uid-18",
-      "timestamp": 1784814932000,
-      "subject": "Reprogramación Ventana Trabajo || SERVICIOS MASIVOS - Paraguay || CONFIGURACION DWDM || 2026-07-29 02:00Hs GMT-3",
-      "category": "tareas"
-    },
-    {
-      "id": "uid-16",
-      "timestamp": 1784813674000,
-      "subject": "Informe Fija de 9 a 10hs",
-      "category": "informesFija"
-    },
-    {
-      "id": "uid-15",
-      "timestamp": 1784813135000,
-      "subject": "Informe 611 Técnico de 8 a 10hs",
-      "category": "informesMovil"
-    },
-    {
-      "id": "uid-5",
-      "timestamp": 1784810407000,
-      "subject": "Reprogramación Ventana Trabajo || SERVICIOS MASIVOS - Argentina || CONFIGURACION DWDM || 2026-07-28 00:00Hs GMT-3",
-      "category": "tareas"
-    },
-    {
-      "id": "19f8efba7c01f85a:escIT",
-      "timestamp": 1784810254000,
-      "subject": "Aplicaciones - Herramientas AUP  | Mantenimiento de Ingeniería de Red",
-      "category": "escalamientosIT",
-      "firstSeen": 1784810254000
-    }
-  ],
-  "lastRun": {
-    "timestamp": 1785024085705,
-    "rangeFrom": 1784833867796,
-    "rangeTo": 1784833867796,
-    "error": "Algunos mails no se pudieron procesar (timeouts); se reintentan en la proxima corrida"
-  }
+  "url": "https://afcowvvrkhborbjndwjo.supabase.co",
+  "anonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFmY293dnZya2hib3Jiam5kd2pvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUxMTEzMTksImV4cCI6MjEwMDY4NzMxOX0.SxDhaH3TiLXgI2PRpmMg9ejCMO03zjBMYaOqi-ld5q0"
 }
 </script>
 
@@ -290,11 +176,57 @@
   var currentTheme = getInitialTheme();
   applyTheme(currentTheme);
 
-  // ---- Data ----
-  var dataEl = document.getElementById("resumen-data");
-  var data = JSON.parse(dataEl.textContent || '{"mails":[],"lastRun":null}');
-  var mails = data.mails || [];
-  var lastRun = data.lastRun || null;
+  // ---- Config / conexion a Supabase ----
+  var configEl = document.getElementById("supabase-config");
+  var config = JSON.parse(configEl.textContent || "{}");
+  var SUPABASE_URL = config.url;
+  var SUPABASE_ANON_KEY = config.anonKey;
+  var lastRunInfo = null; // se carga async desde la tabla "meta"
+
+  function normalizeRow(row) {
+    return {
+      subject: row.subject,
+      category: row.category,
+      sentAtMs: row.sent_at ? Date.parse(row.sent_at) : null,
+      firstSeenMs: row.first_seen_at ? Date.parse(row.first_seen_at) : null,
+      resolved: row.closure_detected === true
+    };
+  }
+
+  async function fetchMails(fromMs, toMs, opts) {
+    opts = opts || {};
+    var params = [
+      "select=subject,category,sent_at,first_seen_at,closure_detected",
+      "sent_at=gte." + encodeURIComponent(new Date(fromMs).toISOString()),
+      "sent_at=lte." + encodeURIComponent(new Date(toMs).toISOString()),
+      "order=sent_at.desc",
+      "limit=2000"
+    ];
+    if (opts.category) {
+      params.push("category=eq." + encodeURIComponent(opts.category));
+    }
+    var url = SUPABASE_URL + "/rest/v1/mails?" + params.join("&");
+    var resp = await fetch(url, {
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + SUPABASE_ANON_KEY }
+    });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    var rows = await resp.json();
+    return rows.map(normalizeRow);
+  }
+
+  async function fetchLastRun() {
+    try {
+      var url = SUPABASE_URL + "/rest/v1/meta?key=eq.last_run&select=value";
+      var resp = await fetch(url, {
+        headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + SUPABASE_ANON_KEY }
+      });
+      if (!resp.ok) return null;
+      var rows = await resp.json();
+      return rows.length ? rows[0].value : null;
+    } catch (e) {
+      return null;
+    }
+  }
 
   // Base categories stored per-mail. "it" and "ingenieria" get split into
   // Nuevo/EnCurso at render time based on how old the thread is RIGHT NOW —
@@ -408,25 +340,25 @@
     var nowMs = Date.now();
     var buckets = {};
     CATEGORY_META.forEach(function (m) { buckets[m.key] = []; });
-    ESCALAMIENTOS_IT_META.forEach(function (m) { buckets[m.key] = []; });
 
-    var sorted = mailsInRange.slice().sort(function (a, b) { return b.timestamp - a.timestamp; });
+    var sorted = mailsInRange.slice().sort(function (a, b) { return b.sentAtMs - a.sentAtMs; });
 
     sorted.forEach(function (m) {
-      if (m.category === "afectacionMasiva") {
+      var cat = m.category;
+      if (cat === "afectacionMasiva") {
         buckets.afectacionMasiva.push({ subject: m.subject, resolved: m.resolved === true });
-      } else if (m.category === "it" || m.category === "ingenieria") {
-        var originMs = (typeof m.firstSeen === "number") ? m.firstSeen : m.timestamp;
+      } else if (cat === "it" || cat === "ingenieria") {
+        var originMs = (typeof m.firstSeenMs === "number") ? m.firstSeenMs : m.sentAtMs;
         var ageHours = (nowMs - originMs) / 3600000;
-        var key = m.category + (ageHours >= 5 ? "EnCurso" : "Nuevo");
+        var key = cat + (ageHours >= 5 ? "EnCurso" : "Nuevo");
         buckets[key].push({ subject: m.subject, ageHours: ageHours, originMs: originMs });
-      } else if (m.category === "tareas") {
+      } else if (cat === "tareas") {
         buckets.tareas.push({ subject: m.subject });
-      } else if (m.category === "pedidosReferentes") {
+      } else if (cat === "pedidosReferentes") {
         buckets.pedidosReferentes.push({ subject: m.subject });
-      } else if (m.category === "informesFija") {
+      } else if (cat === "informesFija") {
         buckets.informesFija.push({ subject: m.subject });
-      } else if (m.category === "informesMovil") {
+      } else if (cat === "informesMovil") {
         buckets.informesMovil.push({ subject: m.subject });
       }
     });
@@ -510,33 +442,51 @@
     });
   }
 
-  function applyRange(fromMs, toMs, label) {
-    var filtered = mails.filter(function (m) { return m.timestamp >= fromMs && m.timestamp <= toMs; });
-    currentRange = { fromMs: fromMs, toMs: toMs, label: label };
+  function lastRunSuffix() {
+    return lastRunInfo ? "  ·  última lectura de bandeja " + fmt(lastRunInfo.timestamp) : "";
+  }
+
+  async function applyRange(fromMs, toMs, label) {
+    rangeLine.textContent = label + "  ·  rango " + fmt(fromMs) + " → " + fmt(toMs) + "  ·  cargando…";
+    var fetched;
+    try {
+      fetched = await fetchMails(fromMs, toMs);
+    } catch (e) {
+      rangeLine.textContent = label + "  ·  error cargando datos: " + e.message;
+      return;
+    }
+    currentRange = { fromMs: fromMs, toMs: toMs, label: label, mails: fetched };
 
     var dark = isDark();
     rangeLine.textContent = label + "  ·  rango " + fmt(fromMs) + " → " + fmt(toMs) +
-      "  ·  " + filtered.length + (filtered.length === 1 ? " mail" : " mails") +
-      (lastRun ? "  ·  última lectura de bandeja " + fmt(lastRun.timestamp) : "");
+      "  ·  " + fetched.length + (fetched.length === 1 ? " mail" : " mails") + lastRunSuffix();
 
-    var buckets = buildBuckets(filtered);
+    var buckets = buildBuckets(fetched);
     renderCards(buckets, dark, cardsEl, CATEGORY_META);
   }
 
-  function applyLapsoRange(fromMs, toMs) {
-    currentLapsoRange = { fromMs: fromMs, toMs: toMs };
-    var filtered = mails.filter(function (m) { return m.timestamp >= fromMs && m.timestamp <= toMs; });
+  async function applyLapsoRange(fromMs, toMs) {
+    rangeLineLapsoEl.textContent = "Rango " + fmt(fromMs) + " → " + fmt(toMs) + "  ·  cargando…";
+    var fetched;
+    try {
+      fetched = await fetchMails(fromMs, toMs);
+    } catch (e) {
+      rangeLineLapsoEl.textContent = "Error cargando datos: " + e.message;
+      return;
+    }
+    currentLapsoRange = { fromMs: fromMs, toMs: toMs, mails: fetched };
     var dark = isDark();
     rangeLineLapsoEl.textContent = "Rango " + fmt(fromMs) + " → " + fmt(toMs) +
-      "  ·  " + filtered.length + (filtered.length === 1 ? " mail" : " mails") +
-      (lastRun ? "  ·  última lectura de bandeja " + fmt(lastRun.timestamp) : "");
-    var buckets = buildBuckets(filtered);
+      "  ·  " + fetched.length + (fetched.length === 1 ? " mail" : " mails") + lastRunSuffix();
+    var buckets = buildBuckets(fetched);
     renderCards(buckets, dark, cardsLapsoEl, CATEGORY_META);
   }
 
   function rerenderLapso() {
     if (currentLapsoRange) {
-      applyLapsoRange(currentLapsoRange.fromMs, currentLapsoRange.toMs);
+      var dark = isDark();
+      var buckets = buildBuckets(currentLapsoRange.mails);
+      renderCards(buckets, dark, cardsLapsoEl, CATEGORY_META);
     } else {
       rangeLineLapsoEl.textContent = "Elegí un rango de fechas y horas arriba y tocá \"Generar resumen\".";
       cardsLapsoEl.innerHTML = "";
@@ -551,18 +501,34 @@
     return startShifted + ARG_OFFSET_MS;
   }
 
-  function renderEscalamientosIT() {
+  var currentEscIT = null; // { mails, todayStartMs }
+
+  async function renderEscalamientosIT() {
     var nowMs = Date.now();
     var todayStartMs = startOfArgTodayMs(nowMs);
-    var dark = isDark();
+    rangeLineEscITEl.textContent = "Hoy  ·  cargando…";
 
-    var todays = mails.filter(function (m) {
-      return m.category === "escalamientosIT" && m.timestamp >= todayStartMs && m.timestamp <= nowMs;
-    });
+    var todays;
+    try {
+      todays = await fetchMails(todayStartMs, nowMs, { category: "escalamientosIT" });
+    } catch (e) {
+      rangeLineEscITEl.textContent = "Error cargando datos: " + e.message;
+      return;
+    }
+    currentEscIT = { mails: todays, todayStartMs: todayStartMs };
+    renderEscalamientosITFromCache();
+  }
+
+  function renderEscalamientosITFromCache() {
+    if (!currentEscIT) return;
+    var nowMs = Date.now();
+    var todayStartMs = currentEscIT.todayStartMs;
+    var todays = currentEscIT.mails;
+    var dark = isDark();
 
     var buckets = { escalamientosITNuevo: [], escalamientosITEnCurso: [] };
     todays.forEach(function (m) {
-      var originMs = (typeof m.firstSeen === "number") ? m.firstSeen : m.timestamp;
+      var originMs = (typeof m.firstSeenMs === "number") ? m.firstSeenMs : m.sentAtMs;
       var ageHours = (nowMs - originMs) / 3600000;
       // "Nuevo" = el problema empezo hoy (mismo dia calendario Argentina).
       // "En curso" = empezo un dia anterior, pero tuvo actividad hoy.
@@ -572,8 +538,7 @@
 
     var todayLabel = new Date(todayStartMs).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
     rangeLineEscITEl.textContent = "Hoy " + todayLabel + " (00:00 hora Argentina → ahora)  ·  " +
-      todays.length + (todays.length === 1 ? " mail" : " mails") +
-      (lastRun ? "  ·  última lectura de bandeja " + fmt(lastRun.timestamp) : "");
+      todays.length + (todays.length === 1 ? " mail" : " mails") + lastRunSuffix();
 
     renderCards(buckets, dark, cardsEscITEl, ESCALAMIENTOS_IT_META);
   }
@@ -582,28 +547,40 @@
     var preset = PRESETS.filter(function (p) { return p.key === key; })[0] || PRESETS[0];
     var toMs = Date.now();
     var fromMs = preset.hours === null ? 0 : toMs - preset.hours * 3600000;
-    applyRange(fromMs, toMs, preset.label);
+    return applyRange(fromMs, toMs, preset.label);
   }
 
   function rerenderCurrent() {
     if (currentRange) {
-      applyRange(currentRange.fromMs, currentRange.toMs, currentRange.label);
+      var dark = isDark();
+      var buckets = buildBuckets(currentRange.mails);
+      renderCards(buckets, dark, cardsEl, CATEGORY_META);
     }
-    if (currentTab === "escalamientosIT") renderEscalamientosIT();
+    if (currentTab === "escalamientosIT") renderEscalamientosITFromCache();
     if (currentTab === "lapso") rerenderLapso();
   }
 
-  if (lastRun && lastRun.error) {
-    var errBox = document.createElement("div");
+  function showErrorBanner(msg) {
     var dark0 = isDark();
+    var errBox = document.createElement("div");
     errBox.style.cssText = "border:1px solid " + (dark0 ? "#5c3630" : "#f3c9c2") + ";background:" + (dark0 ? "#2c1c1a" : "#fdf1ef") + ";border-radius:14px;padding:15px 17px;font-size:14.5px;color:" + (dark0 ? "#f0a598" : "#a83b2a") + ";display:flex;gap:10px;align-items:flex-start;margin-bottom:16px;";
-    errBox.innerHTML = "<span>⚠️</span><span>La última corrida tuvo un error: " + lastRun.error + "</span>";
+    errBox.innerHTML = "<span>⚠️</span><span>La última corrida tuvo un error: " + msg + "</span>";
     cardsEl.parentNode.insertBefore(errBox, cardsEl);
   }
 
-  populatePresets();
-  applyPreset("6h");
-  applyTabStyles();
+  async function bootstrap() {
+    populatePresets();
+    applyTabStyles();
+    await applyPreset("6h");
+
+    fetchLastRun().then(function (value) {
+      lastRunInfo = value;
+      if (lastRunInfo && lastRunInfo.error) showErrorBanner(lastRunInfo.error);
+      rerenderCurrent();
+    });
+  }
+
+  bootstrap();
 
   presetEl.addEventListener("change", function () {
     customMsgEl().textContent = "";

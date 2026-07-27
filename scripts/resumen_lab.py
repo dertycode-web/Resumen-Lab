@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
 Resumen LAB - lee la casilla de Gmail por IMAP, categoriza los mails nuevos
-y actualiza el bloque <script id="resumen-data" type="application/json">
-dentro de index.html (mismo formato que usa el artifact de Cowork / la
-página en Vercel).
+y los guarda en una tabla de Supabase (Postgres), via su API REST/RPC.
 
-Corre desde GitHub Actions cada 6hs, usando GMAIL_USER / GMAIL_APP_PASSWORD
-como variables de entorno (secrets del repo). No depende de la computadora
-del usuario ni de que Cowork esté abierto.
+Corre desde GitHub Actions, usando estas variables de entorno (secrets):
+  GMAIL_USER, GMAIL_APP_PASSWORD, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+
+No depende de la computadora del usuario ni de que Cowork este abierto, y
+ya no escribe nada en index.html: la pagina lee los datos directo de
+Supabase (con la clave publica "anon"), asi que un despliegue de la pagina
+solo hace falta cuando cambia el CODIGO, no cada vez que llegan mails.
 """
 
 import email
@@ -18,13 +20,12 @@ import os
 import re
 import sys
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from email.header import decode_header
 
 IMAP_HOST = "imap.gmail.com"
-INDEX_HTML_PATH = os.path.join(os.path.dirname(__file__), "..", "index.html")
-PRUNE_DAYS = 30
-IT_ING_AGE_HOURS_THRESHOLD = 5  # informational only; real split happens client-side in the page
 
 AFECTACION_MASIVA_SENDER = "argentinaafectacionmasiva@claro.com.ar"
 REPORTES_TECNICA_HINT = "reportestecnica"  # matches reportestecnica@ and reportestecnicas@
@@ -53,10 +54,16 @@ CLOSURE_PATTERNS = [
 CLOSURE_RE = re.compile("|".join(CLOSURE_PATTERNS), re.IGNORECASE)
 WBS_RE = re.compile(r"\bWBS\b", re.IGNORECASE)
 
+MAX_BODY_CHARS = 20000  # tope defensivo, por si algun mail viene con un cuerpo gigante
+
 
 def log(msg):
     print(msg, flush=True)
 
+
+# ---------------------------------------------------------------------------
+# Parseo de mails (igual que antes)
+# ---------------------------------------------------------------------------
 
 def decode_mime_header(value):
     if not value:
@@ -108,7 +115,10 @@ def get_body_text(msg):
             chunks.append(strip_html(payload) if ctype == "text/html" else payload)
         except Exception:
             pass
-    return "\n".join(chunks)
+    text = "\n".join(chunks)
+    if len(text) > MAX_BODY_CHARS:
+        text = text[:MAX_BODY_CHARS] + "\n[...cortado...]"
+    return text
 
 
 def addr_list_text(msg, header_name):
@@ -130,9 +140,16 @@ def epoch_ms_from_date_header(msg):
         return None
 
 
+def is_first_of_chain(msg):
+    """True si el mail no tiene 'In-Reply-To' ni 'References' (o sea, no es
+    una respuesta a nada que Gmail conozca). Se lee directo del encabezado
+    del mail ya descargado — cero consultas IMAP extra."""
+    return not msg.get("In-Reply-To") and not msg.get("References")
+
+
 # Cache por corrida (el proceso arranca de cero cada vez que corre el
 # workflow): evita pedir el thread id dos veces para el mismo mail cuando
-# tanto classify() como classify_escalamientos_it() lo necesitan.
+# tanto la clasificacion principal como "Escalamientos IT" lo necesitan.
 _THRID_CACHE = {}
 
 
@@ -213,290 +230,260 @@ def is_it_escalation_recipient(recipients_text):
     )
 
 
-def classify_escalamientos_it(imap, uid, subject, body, recipients_text, own_ms):
-    """Solapa 'Escalamientos IT': cualquier mail (de cualquier remitente)
-    enviado a Gestion de Incidentes / Help Desk / Help Desk Billetera.
-    Independiente de la clasificacion principal (puede coexistir con ella).
-    El origen real del hilo se arma solo, mail a mail, con el "firstSeen"
-    minimo que va viendo cada corrida (ver merge_result en main) — no hace
-    falta re-bajar el hilo entero para saberlo."""
-    if not is_it_escalation_recipient(recipients_text):
-        return None
-    thrid = gm_thread_id_hex(imap, uid)
-    origin_ms = own_ms
-    quoted_ms = earliest_quoted_date_ms(body)
-    if quoted_ms:
-        origin_ms = min(origin_ms, quoted_ms)
-    return {
-        "category": "escalamientosIT", "timestamp": own_ms, "firstSeen": origin_ms,
-        "subject": subject, "thread_id": thrid,
-    }
-
+# ---------------------------------------------------------------------------
+# Clasificacion: devuelve una lista de categorias aplicables (un mail puede
+# pertenecer a mas de una a la vez, ej. "it" + "escalamientosIT"), mas los
+# datos que necesita cada categoria (origen del hilo, cierre detectado).
+# ---------------------------------------------------------------------------
 
 def classify(imap, uid, msg):
     subject = decode_mime_header(msg.get("Subject")) or ""
     sender_raw = decode_mime_header(msg.get("From")) or ""
     sender_name, sender_addr = email.utils.parseaddr(sender_raw)
     sender_addr = (sender_addr or "").lower()
-    to_text = addr_list_text(msg, "To").lower()
-    cc_text = addr_list_text(msg, "Cc").lower()
-    recipients_text = to_text + " " + cc_text
+    to_text = addr_list_text(msg, "To")
+    cc_text = addr_list_text(msg, "Cc")
+    recipients_text = (to_text + " " + cc_text).lower()
     body = get_body_text(msg)
     subject_lower = subject.lower()
     own_ms = epoch_ms_from_date_header(msg)
 
+    categories = []
+    closure_detected = False
+    first_seen_candidate = own_ms
+
+    def add_origin_candidates():
+        nonlocal first_seen_candidate
+        quoted_ms = earliest_quoted_date_ms(body)
+        if quoted_ms:
+            first_seen_candidate = min(first_seen_candidate, quoted_ms)
+
     # 1. Tareas (WBS)
     if WBS_RE.search(subject) or WBS_RE.search(body):
-        return {"category": "tareas", "timestamp": own_ms, "subject": subject}
+        categories.append("tareas")
 
     # 2. Afectaciones masivas
-    # "resolved" se acumula mail a mail: si ESTE mensaje puntual tiene la
-    # palabra de cierre, se marca resuelto (y merge_result en main() hace
-    # que, una vez resuelto, se quede resuelto aunque no vuelva a aparecer).
     if sender_addr == AFECTACION_MASIVA_SENDER:
-        thrid = gm_thread_id_hex(imap, uid)
-        resolved = bool(CLOSURE_RE.search(subject) or CLOSURE_RE.search(body))
-        return {
-            "category": "afectacionMasiva",
-            "timestamp": own_ms,
-            "subject": subject,
-            "resolved": resolved,
-            "thread_id": thrid,
-        }
+        categories.append("afectacionMasiva")
+        closure_detected = bool(CLOSURE_RE.search(subject) or CLOSURE_RE.search(body))
 
-    # 3. Reportes Tecnica -> IT / Ingenieria
-    # "firstSeen" tambien se acumula mail a mail (ver merge_result): cada
-    # corrida aporta como candidato de origen la fecha de ESTE mensaje mas
-    # cualquier fecha citada en su cuerpo, y el minimo historico gana. No
-    # hace falta re-bajar el hilo completo para saber cuando empezo.
+    # 3. Reportes Tecnica -> IT / Ingenieria / Informes
     if REPORTES_TECNICA_HINT in sender_addr:
-        matched_it = is_it_escalation_recipient(recipients_text)
-        if matched_it:
-            thrid = gm_thread_id_hex(imap, uid)
-            origin_ms = own_ms
-            quoted_ms = earliest_quoted_date_ms(body)
-            if quoted_ms:
-                origin_ms = min(origin_ms, quoted_ms)
-            return {
-                "category": "it", "timestamp": own_ms, "firstSeen": origin_ms,
-                "subject": subject, "thread_id": thrid,
-            }
-
-        matched_ing = any(re.search(r"\b" + re.escape(k) + r"\b", recipients_text) for k in ING_RECIPIENT_KEYWORDS)
-        if matched_ing:
-            thrid = gm_thread_id_hex(imap, uid)
-            origin_ms = own_ms
-            quoted_ms = earliest_quoted_date_ms(body)
-            if quoted_ms:
-                origin_ms = min(origin_ms, quoted_ms)
-            return {
-                "category": "ingenieria", "timestamp": own_ms, "firstSeen": origin_ms,
-                "subject": subject, "thread_id": thrid,
-            }
-
-        # 5. Informes (subject-based, sender is reportestecnica in practice)
-        if "informe" in subject_lower:
+        if is_it_escalation_recipient(recipients_text):
+            categories.append("it")
+            add_origin_candidates()
+        elif any(re.search(r"\b" + re.escape(k) + r"\b", recipients_text) for k in ING_RECIPIENT_KEYWORDS):
+            categories.append("ingenieria")
+            add_origin_candidates()
+        elif "informe" in subject_lower:
             if "fija" in subject_lower:
-                return {"category": "informesFija", "timestamp": own_ms, "subject": subject}
-            if "611" in subject_lower:
-                return {"category": "informesMovil", "timestamp": own_ms, "subject": subject}
-            log(f"[sin clasificar] Informe con patron desconocido: {subject!r}")
-            return None
+                categories.append("informesFija")
+            elif "611" in subject_lower:
+                categories.append("informesMovil")
+            else:
+                log(f"[sin clasificar] Informe con patron desconocido: {subject!r}")
 
     # 4. Pedidos Referentes
-    if MARIA_INES_HINT in sender_name.lower() and REPORTES_TECNICA_HINT in recipients_text:
-        return {"category": "pedidosReferentes", "timestamp": own_ms, "subject": subject}
+    if MARIA_INES_HINT in sender_name.lower() and REPORTES_TECNICA_HINT in recipients_text.lower():
+        categories.append("pedidosReferentes")
 
-    # 5b. Informes desde cualquier otro remitente (por si aparece uno nuevo)
-    if "informe" in subject_lower:
+    # 5. Informes desde cualquier otro remitente (por si aparece uno nuevo)
+    if "informe" in subject_lower and "informesFija" not in categories and "informesMovil" not in categories:
         if "fija" in subject_lower:
-            return {"category": "informesFija", "timestamp": own_ms, "subject": subject}
-        if "611" in subject_lower:
-            return {"category": "informesMovil", "timestamp": own_ms, "subject": subject}
-        log(f"[sin clasificar] Informe con patron desconocido: {subject!r}")
+            categories.append("informesFija")
+        elif "611" in subject_lower:
+            categories.append("informesMovil")
+
+    # 6. "Escalamientos IT": cualquier mail (de cualquier remitente) enviado a
+    # Gestion de Incidentes / Help Desk / Help Desk Billetera. Independiente
+    # de todo lo anterior, puede coexistir con otra categoria del mismo mail.
+    if is_it_escalation_recipient(recipients_text):
+        categories.append("escalamientosIT")
+        add_origin_candidates()
+
+    if not categories:
         return None
 
-    return None
+    thrid = None
+    if any(c in ("afectacionMasiva", "it", "ingenieria", "escalamientosIT") for c in categories):
+        thrid = gm_thread_id_hex(imap, uid)
+
+    return {
+        "categories": categories,
+        "subject": subject,
+        "sender_name": sender_name,
+        "sender_address": sender_addr,
+        "to_recipients": to_text,
+        "cc_recipients": cc_text,
+        "sent_at_ms": own_ms,
+        "first_seen_ms": first_seen_candidate,
+        "is_first_of_chain": is_first_of_chain(msg),
+        "closure_detected": closure_detected,
+        "thread_id": thrid,
+        "body_text": body,
+    }
 
 
-def load_data():
-    with open(INDEX_HTML_PATH, "r", encoding="utf-8") as f:
-        html = f.read()
-    m = re.search(
-        r'(<script id="resumen-data" type="application/json">)(.*?)(</script>)',
-        html,
-        re.DOTALL,
-    )
-    if not m:
-        raise RuntimeError("No se encontró el bloque resumen-data en index.html")
-    data = json.loads(m.group(2))
-    data.setdefault("mails", [])
-    data.setdefault("lastRun", None)
-    return html, m, data
+# ---------------------------------------------------------------------------
+# Supabase (API REST + RPC)
+# ---------------------------------------------------------------------------
+
+def ms_to_iso(ms):
+    if ms is None:
+        return None
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).isoformat()
 
 
-def save_data(html, m, data):
-    new_json = json.dumps(data, ensure_ascii=False, indent=2)
-    new_block = m.group(1) + "\n" + new_json + "\n" + m.group(3)
-    new_html = html[: m.start()] + new_block + html[m.end():]
-    with open(INDEX_HTML_PATH, "w", encoding="utf-8") as f:
-        f.write(new_html)
+class SupabaseClient:
+    def __init__(self, url, service_role_key):
+        self.url = url.rstrip("/")
+        self.key = service_role_key
 
+    def _request(self, method, path, body=None):
+        url = f"{self.url}{path}"
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        req = urllib.request.Request(url, data=data, method=method)
+        req.add_header("apikey", self.key)
+        req.add_header("Authorization", f"Bearer {self.key}")
+        req.add_header("Content-Type", "application/json")
+        if method == "GET":
+            req.add_header("Accept", "application/json")
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            raw = resp.read()
+            if not raw:
+                return None
+            return json.loads(raw)
 
-def prune_mails(mails, now_ms):
-    cutoff = now_ms - PRUNE_DAYS * 24 * 3600 * 1000
-    kept = []
-    for m in mails:
-        if m.get("timestamp", 0) >= cutoff:
-            kept.append(m)
-            continue
-        if m.get("category") == "afectacionMasiva" and m.get("resolved") is not True:
-            kept.append(m)  # afectación masiva sin resolver: nunca se poda
-            continue
-        # se poda (queda afuera)
-    return kept
+    def upsert_mail(self, record_id, thrid, category, classification, own_ms):
+        payload = {
+            "id": record_id,
+            "thread_id": thrid,
+            "subject": classification["subject"],
+            "sender_name": classification["sender_name"],
+            "sender_address": classification["sender_address"],
+            "to_recipients": classification["to_recipients"],
+            "cc_recipients": classification["cc_recipients"],
+            "sent_at": ms_to_iso(own_ms),
+            "first_seen_at": ms_to_iso(classification["first_seen_ms"]),
+            "is_first_of_chain": classification["is_first_of_chain"],
+            "closure_detected": classification["closure_detected"],
+            "category": category,
+            "body_text": classification["body_text"],
+        }
+        self._request("POST", "/rest/v1/rpc/upsert_mail", {"payload": payload})
+
+    def set_meta(self, key, value):
+        self._request("POST", "/rest/v1/rpc/set_meta", {"p_key": key, "p_value": value})
+
+    def get_meta(self, key):
+        result = self._request("GET", f"/rest/v1/meta?key=eq.{key}&select=value")
+        if result:
+            return result[0]["value"]
+        return None
+
+    def max_sent_at_ms(self):
+        result = self._request("GET", "/rest/v1/mails?select=sent_at&order=sent_at.desc&limit=1")
+        if result:
+            iso = result[0]["sent_at"]
+            dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+            return int(dt.timestamp() * 1000)
+        return None
 
 
 def main():
     gmail_user = os.environ.get("GMAIL_USER")
     gmail_pass = os.environ.get("GMAIL_APP_PASSWORD")
+    supabase_url = os.environ.get("SUPABASE_URL")
+    supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
     now_ms = int(time.time() * 1000)
 
-    html, match, data = load_data()
-    last_run = data.get("lastRun") or {}
-    range_from = last_run.get("rangeTo") or (now_ms - 6 * 3600 * 1000)
+    missing = [
+        name for name, val in [
+            ("GMAIL_USER", gmail_user), ("GMAIL_APP_PASSWORD", gmail_pass),
+            ("SUPABASE_URL", supabase_url), ("SUPABASE_SERVICE_ROLE_KEY", supabase_key),
+        ] if not val
+    ]
+    if missing:
+        log(f"ERROR: faltan variables de entorno: {', '.join(missing)}")
+        sys.exit(0)
+
+    sb = SupabaseClient(supabase_url, supabase_key)
+
+    last_max_sent_ms = None
+    try:
+        last_max_sent_ms = sb.max_sent_at_ms()
+    except Exception as e:
+        log(f"No se pudo leer el ultimo checkpoint de la base: {type(e).__name__}: {e}")
+
+    range_from = last_max_sent_ms or (now_ms - 6 * 3600 * 1000)
     # Tope maximo de cuanto se puede volver hacia atras, sin importar que tan
-    # vieja sea la ultima corrida GUARDADA. Si una corrida se cuelga y muere
-    # antes de escribir "lastRun", la proxima corrida volveria a intentar el
-    # mismo backlog enorme, se colgaria de nuevo, y nunca avanzaria (circulo
-    # vicioso). Con este tope, en el peor caso se puede perder algun mail
-    # viejo si hubo un corte muy largo, pero el script siempre puede terminar.
+    # vieja sea la ultima fecha guardada. Evita que una corrida fallida deje
+    # un backlog enorme que nunca se puede terminar de procesar.
     MAX_LOOKBACK_MS = 60 * 60 * 1000
     search_window_start = max(range_from, now_ms - MAX_LOOKBACK_MS)
 
     error_msg = None
-    new_or_updated = 0
+    processed = 0
+    skipped_due_to_error = False
 
-    if not gmail_user or not gmail_pass:
-        error_msg = "Faltan las variables de entorno GMAIL_USER / GMAIL_APP_PASSWORD"
-        log(f"ERROR: {error_msg}")
-    else:
-        try:
-            imap = imaplib.IMAP4_SSL(IMAP_HOST, timeout=25)
-            imap.login(gmail_user, gmail_pass)
-            imap.select("INBOX")
+    try:
+        imap = imaplib.IMAP4_SSL(IMAP_HOST, timeout=25)
+        imap.login(gmail_user, gmail_pass)
+        imap.select("INBOX")
 
-            # IMAP SINCE solo filtra por fecha (sin hora), asi que restamos 1 dia
-            # de colchon sobre el inicio real de la ventana para no perder nada
-            # por husos horarios, sin volver a bajar 2 dias enteros cada vez.
-            since_dt = datetime.fromtimestamp(search_window_start / 1000, tz=timezone.utc) - timedelta(days=1)
-            since_date = since_dt.strftime("%d-%b-%Y")
-            typ, data_uids = imap.uid("search", None, f'(SINCE {since_date})')
-            uids = data_uids[0].split() if typ == "OK" and data_uids and data_uids[0] else []
-            log(f"Candidatos encontrados (SINCE {since_date}): {len(uids)}")
+        # IMAP SINCE solo filtra por fecha (sin hora), asi que restamos 1 dia
+        # de colchon sobre el inicio real de la ventana para no perder nada
+        # por husos horarios.
+        since_dt = datetime.fromtimestamp(search_window_start / 1000, tz=timezone.utc) - timedelta(days=1)
+        since_date = since_dt.strftime("%d-%b-%Y")
+        typ, data_uids = imap.uid("search", None, f"(SINCE {since_date})")
+        uids = data_uids[0].split() if typ == "OK" and data_uids and data_uids[0] else []
+        log(f"Candidatos encontrados (SINCE {since_date}): {len(uids)}")
 
-            mails_by_id = {m["id"]: m for m in data["mails"]}
-
-            def merge_result(record_id, result, own_ms):
-                existing = mails_by_id.get(record_id)
-                new_ts = result["timestamp"] if result["timestamp"] is not None else own_ms
-                if existing:
-                    existing["subject"] = result["subject"]
-                    existing["category"] = result["category"]
-                    # "timestamp" = ultima actividad conocida (para que el item
-                    # se siga mostrando en rangos recientes mientras haya novedades)
-                    existing["timestamp"] = max(existing.get("timestamp", 0), new_ts)
-                    if "firstSeen" in result:
-                        existing["firstSeen"] = min(existing.get("firstSeen", result["firstSeen"]), result["firstSeen"])
-                    if "resolved" in result:
-                        if result["resolved"] is True:
-                            existing["resolved"] = True
-                        else:
-                            existing.setdefault("resolved", False)
-                else:
-                    record = {
-                        "id": record_id,
-                        "timestamp": new_ts,
-                        "subject": result["subject"],
-                        "category": result["category"],
-                    }
-                    if "firstSeen" in result:
-                        record["firstSeen"] = result["firstSeen"]
-                    if "resolved" in result:
-                        record["resolved"] = result["resolved"]
-                    mails_by_id[record_id] = record
-
-            skipped_due_to_error = False
-            for uid in uids:
-                try:
-                    msg = fetch_message(imap, uid)
-                    if msg is None:
-                        continue
-                    own_ms = epoch_ms_from_date_header(msg)
-                    if own_ms is None or own_ms < search_window_start or own_ms > now_ms + 5 * 60 * 1000:
-                        continue
-                    uid_str = uid.decode() if isinstance(uid, bytes) else uid
-
-                    result = classify(imap, uid, msg)
-                    if result is not None:
-                        thrid = result.pop("thread_id", None)
-                        record_id = thrid or f"uid-{uid_str}"
-                        merge_result(record_id, result, own_ms)
-                        new_or_updated += 1
-
-                    # Solapa "Escalamientos IT": independiente de la clasificacion
-                    # principal, por eso usa su propio namespace de id (sufijo ':escIT')
-                    subject = decode_mime_header(msg.get("Subject")) or ""
-                    to_text = addr_list_text(msg, "To").lower()
-                    cc_text = addr_list_text(msg, "Cc").lower()
-                    recipients_text = to_text + " " + cc_text
-                    body = get_body_text(msg)
-                    esc_result = classify_escalamientos_it(imap, uid, subject, body, recipients_text, own_ms)
-                    if esc_result is not None:
-                        thrid = esc_result.pop("thread_id", None)
-                        esc_record_id = (thrid or f"uid-{uid_str}") + ":escIT"
-                        merge_result(esc_record_id, esc_result, own_ms)
-                        new_or_updated += 1
-                except Exception as e:
-                    # Un mail puntual que falla (ej. timeout de red en ESE fetch)
-                    # no debe tirar abajo el resto de la corrida: se saltea y
-                    # se reintenta en la proxima corrida (no se avanza el
-                    # checkpoint mas alla de este punto, ver mas abajo).
-                    skipped_due_to_error = True
-                    log(f"[uid={uid}] error procesando, se saltea: {type(e).__name__}: {e}")
+        for uid in uids:
+            try:
+                msg = fetch_message(imap, uid)
+                if msg is None:
+                    continue
+                own_ms = epoch_ms_from_date_header(msg)
+                if own_ms is None or own_ms < search_window_start or own_ms > now_ms + 5 * 60 * 1000:
                     continue
 
-            # Guarda lo que se pudo procesar aunque algun mail individual haya
-            # fallado — antes, cualquier error a mitad de la corrida perdia
-            # TODO lo que se habia clasificado hasta ese momento.
-            data["mails"] = list(mails_by_id.values())
-            if skipped_due_to_error:
-                error_msg = "Algunos mails no se pudieron procesar (timeouts); se reintentan en la proxima corrida"
-            imap.logout()
-        except Exception as e:
-            error_msg = f"{type(e).__name__}: {e}"
-            log(f"ERROR durante la corrida: {error_msg}")
+                result = classify(imap, uid, msg)
+                if result is None:
+                    continue
 
-    data["mails"] = prune_mails(data["mails"], now_ms)
-    data["mails"].sort(key=lambda m: m.get("timestamp", 0), reverse=True)
+                uid_str = uid.decode() if isinstance(uid, bytes) else uid
+                record_id = result["thread_id"] or f"uid-{uid_str}"
 
-    # Si hubo error, NO avanzamos "rangeTo" a ahora: dejamos el checkpoint
-    # anterior para que la proxima corrida vuelva a intentar la misma ventana
-    # (acotada igual por MAX_LOOKBACK_MS). Si avanzabamos el checkpoint pese
-    # al error, los mails que quedaron sin procesar por el corte se saltaban
-    # para siempre.
-    new_range_to = now_ms if error_msg is None else range_from
-    data["lastRun"] = {
-        "timestamp": now_ms,
-        "rangeFrom": range_from,
-        "rangeTo": new_range_to,
-        "error": error_msg,
-    }
+                for category in result["categories"]:
+                    sb.upsert_mail(record_id, result["thread_id"], category, result, own_ms)
+                processed += 1
+            except Exception as e:
+                skipped_due_to_error = True
+                log(f"[uid={uid}] error procesando, se saltea: {type(e).__name__}: {e}")
+                continue
 
-    save_data(html, match, data)
-    log(f"Listo. Mails nuevos/actualizados: {new_or_updated}. Total en log: {len(data['mails'])}.")
+        imap.logout()
+        if skipped_due_to_error:
+            error_msg = "Algunos mails no se pudieron procesar (timeouts); se reintentan en la proxima corrida"
+    except Exception as e:
+        error_msg = f"{type(e).__name__}: {e}"
+        log(f"ERROR durante la corrida: {error_msg}")
+
+    try:
+        sb.set_meta("last_run", {
+            "timestamp": now_ms,
+            "rangeFrom": range_from,
+            "processed": processed,
+            "error": error_msg,
+        })
+    except Exception as e:
+        log(f"No se pudo guardar el estado de la corrida: {type(e).__name__}: {e}")
+
+    log(f"Listo. Mails procesados: {processed}.")
     if error_msg:
-        sys.exit(0)  # no falla el job igual; el error queda registrado en lastRun
+        log(f"Con errores: {error_msg}")
 
 
 if __name__ == "__main__":
