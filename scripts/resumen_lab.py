@@ -449,6 +449,15 @@ class SupabaseClient:
         return None
 
 
+QUOTA_ERROR_HINTS = ("overquota", "bandwidth", "command or bandwidth limits")
+QUOTA_COOLDOWN_MS = 90 * 60 * 1000  # 90 min de enfriamiento tras un OVERQUOTA
+
+
+def is_quota_error(exc):
+    s = str(exc).lower()
+    return any(hint in s for hint in QUOTA_ERROR_HINTS)
+
+
 def process_candidate_uids(imap, sb, uids, window_start_ms=None, window_end_ms=None, prefilter_headers=False):
     """Clasifica y guarda en Supabase una lista de UIDs candidatos (ya
     ordenados o no). Si prefilter_headers=True, primero chequea la fecha via
@@ -513,6 +522,19 @@ def process_candidate_uids(imap, sb, uids, window_start_ms=None, window_end_ms=N
     return processed
 
 
+def set_quota_cooldown(sb, now_ms):
+    """Gmail bloquea la cuenta por IMAP (OVERQUOTA) normalmente ~1h, a veces
+    hasta 24hs si se repite. Guardamos hasta cuando conviene NO intentar de
+    nuevo, para que las corridas automaticas se salteen solas en vez de
+    seguir golpeando la cuenta (lo que puede extender el bloqueo)."""
+    until_ms = now_ms + QUOTA_COOLDOWN_MS
+    try:
+        sb.set_meta("quota_cooldown_until", until_ms)
+        log(f"[CUOTA] Se detecto OVERQUOTA. Enfriamiento hasta {ms_to_iso(until_ms)}.")
+    except Exception as e:
+        log(f"No se pudo guardar el enfriamiento de cuota: {type(e).__name__}: {e}")
+
+
 def run_backfill(sb, gmail_user, gmail_pass, now_ms, backfill_hours):
     """Barrido UNICO por fecha (SINCE), pensado para completar historial que
     el checkpoint de UID de las corridas en vivo ya dejo atras. A proposito
@@ -542,6 +564,8 @@ def run_backfill(sb, gmail_user, gmail_pass, now_ms, backfill_hours):
     except Exception as e:
         error_msg = f"{type(e).__name__}: {e}"
         log(f"[BACKFILL] ERROR: {error_msg}")
+        if is_quota_error(e):
+            set_quota_cooldown(sb, now_ms)
 
     try:
         sb.set_meta("last_backfill", {
@@ -607,6 +631,8 @@ def run_incremental(sb, gmail_user, gmail_pass, now_ms):
     except Exception as e:
         error_msg = f"{type(e).__name__}: {e}"
         log(f"ERROR durante la corrida: {error_msg}")
+        if is_quota_error(e):
+            set_quota_cooldown(sb, now_ms)
 
     if max_ok_uid is not None and max_ok_uid != last_uid:
         try:
@@ -647,6 +673,17 @@ def main():
         sys.exit(0)
 
     sb = SupabaseClient(supabase_url, supabase_key)
+
+    try:
+        cooldown_until = sb.get_meta("quota_cooldown_until")
+    except Exception as e:
+        cooldown_until = None
+        log(f"No se pudo leer el enfriamiento de cuota: {type(e).__name__}: {e}")
+
+    if cooldown_until is not None and now_ms < int(cooldown_until):
+        remaining_min = int((int(cooldown_until) - now_ms) / 60000)
+        log(f"[CUOTA] Todavia en enfriamiento por OVERQUOTA (quedan ~{remaining_min} min). Se saltea esta corrida.")
+        return
 
     backfill_hours_raw = (os.environ.get("BACKFILL_HOURS") or "").strip()
     if backfill_hours_raw:
