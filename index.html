@@ -103,7 +103,6 @@
     </div>
     <div id="rangeControls" style="display:flex;align-items:center;gap:10px;">
       <button id="themeToggle" title="Cambiar tema" style="width:46px;height:46px;border-radius:11px;border:1px solid var(--toggle-border);background:var(--toggle-bg);cursor:pointer;font-size:19px;display:flex;align-items:center;justify-content:center;box-shadow:var(--shadow-soft);flex-shrink:0;">🌙</button>
-      <select id="rangePreset" style="height:44px;border:1px solid var(--input-border);border-radius:10px;padding:0 14px;font-size:14.5px;background:var(--input-bg);color:var(--input-text);box-shadow:var(--shadow-soft);cursor:pointer;"></select>
     </div>
   </div>
 
@@ -250,16 +249,11 @@
     { key: "escalamientosITEnCurso", label: "Escalamientos IT · En curso", icon: "🔥", rgb: "214,127,17" }
   ];
 
-  var PRESETS = [
-    { key: "6h", label: "Últimas 6 horas", hours: 6 },
-    { key: "12h", label: "Últimas 12 horas", hours: 12 },
-    { key: "24h", label: "Últimas 24 horas", hours: 24 },
-    { key: "7d", label: "Últimos 7 días", hours: 24 * 7 },
-    { key: "30d", label: "Últimos 30 días", hours: 24 * 30 },
-    { key: "all", label: "Todo el historial", hours: null }
-  ];
+  // La solapa "Resumen" siempre muestra una ventana viva de las ultimas 6
+  // horas: no hay selector, se recalcula sola en cada refresh automatico.
+  var RESUMEN_WINDOW_HOURS = 6;
+  var RESUMEN_REFRESH_MS = 2 * 60 * 1000; // recalcula la ventana cada 2 min
 
-  var presetEl = document.getElementById("rangePreset");
   var rangeLine = document.getElementById("rangeLine");
   var cardsEl = document.getElementById("cards");
   var cardsEscITEl = document.getElementById("cardsEscIT");
@@ -290,7 +284,6 @@
     rangeLineLapsoEl.style.display = isLapso ? "block" : "none";
 
     rangePanelEl.style.display = isLapso ? "block" : "none";
-    presetEl.style.display = isResumen ? "block" : "none";
 
     if (isEscIT) renderEscalamientosIT();
     if (isLapso) rerenderLapso();
@@ -324,16 +317,6 @@
     if (d > 0) return d + "d " + h + "h";
     if (h > 0) return h + "h " + m + "m";
     return m + "m";
-  }
-
-  function populatePresets() {
-    presetEl.innerHTML = "";
-    PRESETS.forEach(function (p) {
-      var opt = document.createElement("option");
-      opt.value = p.key;
-      opt.textContent = p.label;
-      presetEl.appendChild(opt);
-    });
   }
 
   function buildBuckets(mailsInRange) {
@@ -544,11 +527,10 @@
     renderCards(buckets, dark, cardsEscITEl, ESCALAMIENTOS_IT_META);
   }
 
-  function applyPreset(key) {
-    var preset = PRESETS.filter(function (p) { return p.key === key; })[0] || PRESETS[0];
+  function refreshResumenWindow() {
     var toMs = Date.now();
-    var fromMs = preset.hours === null ? 0 : toMs - preset.hours * 3600000;
-    return applyRange(fromMs, toMs, preset.label);
+    var fromMs = toMs - RESUMEN_WINDOW_HOURS * 3600000;
+    return applyRange(fromMs, toMs, "Últimas " + RESUMEN_WINDOW_HOURS + " horas (en vivo)");
   }
 
   function rerenderCurrent() {
@@ -570,23 +552,27 @@
   }
 
   async function bootstrap() {
-    populatePresets();
     applyTabStyles();
-    await applyPreset("6h");
+    await refreshResumenWindow();
 
     fetchLastRun().then(function (value) {
       lastRunInfo = value;
       if (lastRunInfo && lastRunInfo.error) showErrorBanner(lastRunInfo.error);
       rerenderCurrent();
     });
+
+    // La ventana de "Resumen" se recalcula sola cada tanto: al pasar el
+    // tiempo, mails viejos van saliendo de las ultimas 6hs y los nuevos que
+    // fueron llegando (via las corridas automaticas) van entrando, sin que
+    // haga falta recargar la pagina a mano.
+    setInterval(function () {
+      refreshResumenWindow();
+      if (currentTab === "escalamientosIT") renderEscalamientosIT();
+      fetchLastRun().then(function (value) { lastRunInfo = value; });
+    }, RESUMEN_REFRESH_MS);
   }
 
   bootstrap();
-
-  presetEl.addEventListener("change", function () {
-    customMsgEl().textContent = "";
-    applyPreset(presetEl.value);
-  });
 
   themeToggle.addEventListener("click", function () {
     currentTheme = currentTheme === "dark" ? "light" : "dark";
