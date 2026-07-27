@@ -10,6 +10,12 @@ No depende de la computadora del usuario ni de que Cowork este abierto, y
 ya no escribe nada en index.html: la pagina lee los datos directo de
 Supabase (con la clave publica "anon"), asi que un despliegue de la pagina
 solo hace falta cuando cambia el CODIGO, no cada vez que llegan mails.
+
+IMPORTANTE sobre rendimiento: todo el fetch de IMAP se hace en LOTES (varios
+UIDs en una sola consulta), no uno por uno. Un round-trip IMAP individual
+puede tardar varios segundos; con 100+ mails candidatos, hacerlo uno por uno
+tardaba mas de 20 minutos. Agrupando en tandas de ~100-150 UIDs por consulta,
+el mismo trabajo se hace en unas pocas consultas en total.
 """
 
 import email
@@ -56,13 +62,17 @@ WBS_RE = re.compile(r"\bWBS\b", re.IGNORECASE)
 
 MAX_BODY_CHARS = 20000  # tope defensivo, por si algun mail viene con un cuerpo gigante
 
+# Categorias que necesitan el X-GM-THRID (para agrupar respuestas del mismo
+# hilo a lo largo de corridas / detectar cuanto hace que arranco la cadena).
+CATEGORIES_NEEDING_THRID = {"afectacionMasiva", "it", "ingenieria", "escalamientosIT"}
+
 
 def log(msg):
     print(msg, flush=True)
 
 
 # ---------------------------------------------------------------------------
-# Parseo de mails (igual que antes)
+# Parseo de mails
 # ---------------------------------------------------------------------------
 
 def decode_mime_header(value):
@@ -147,63 +157,6 @@ def is_first_of_chain(msg):
     return not msg.get("In-Reply-To") and not msg.get("References")
 
 
-# Cache por corrida (el proceso arranca de cero cada vez que corre el
-# workflow): evita pedir el thread id dos veces para el mismo mail cuando
-# tanto la clasificacion principal como "Escalamientos IT" lo necesitan.
-_THRID_CACHE = {}
-
-
-def gm_thread_id_hex(imap, uid):
-    """Fetch Gmail's X-GM-THRID extension y lo devuelve en hex. Es UNA sola
-    consulta extra por mail (no recorre el resto del hilo) — se usa solo
-    como clave estable para agrupar respuestas del mismo hilo a lo largo
-    de corridas, no para recalcular fechas viejas."""
-    uid_key = uid.decode() if isinstance(uid, bytes) else uid
-    if uid_key in _THRID_CACHE:
-        return _THRID_CACHE[uid_key]
-    try:
-        typ, data = imap.uid("fetch", uid, "(X-GM-THRID)")
-        if typ != "OK" or not data or not data[0]:
-            _THRID_CACHE[uid_key] = None
-            return None
-        raw = data[0]
-        if isinstance(raw, bytes):
-            raw = raw.decode(errors="replace")
-        m = re.search(r"X-GM-THRID\s+(\d+)", raw)
-        if not m:
-            _THRID_CACHE[uid_key] = None
-            return None
-        thrid_int = int(m.group(1))
-        result = format(thrid_int, "x")
-        _THRID_CACHE[uid_key] = result
-        return result
-    except Exception as e:
-        log(f"[gm_thread_id_hex] uid={uid} excepcion: {type(e).__name__}: {e}")
-        _THRID_CACHE[uid_key] = None
-        return None
-
-
-def fetch_message(imap, uid):
-    typ, data = imap.uid("fetch", uid, "(RFC822)")
-    if typ != "OK" or not data or not data[0]:
-        return None
-    raw = data[0][1]
-    return email.message_from_bytes(raw)
-
-
-def fetch_header_only(imap, uid):
-    """Trae SOLO el encabezado (sin el cuerpo) para poder chequear la fecha
-    del mail sin bajar el mensaje completo. Mucho mas liviano que RFC822 —
-    evita descargar cuerpos grandes de mails que despues se van a descartar
-    por caer fuera de la ventana de tiempo (esto pasaba antes: el filtro por
-    fecha se aplicaba DESPUES de bajar el mail entero)."""
-    typ, data = imap.uid("fetch", uid, "(BODY.PEEK[HEADER])")
-    if typ != "OK" or not data or not data[0]:
-        return None
-    raw = data[0][1]
-    return email.message_from_bytes(raw)
-
-
 MESES_ES = {
     "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
     "julio": 7, "agosto": 8, "septiembre": 9, "setiembre": 9, "octubre": 10,
@@ -244,12 +197,87 @@ def is_it_escalation_recipient(recipients_text):
 
 
 # ---------------------------------------------------------------------------
+# Fetch de IMAP EN LOTES (varios UIDs por consulta, no uno por uno)
+# ---------------------------------------------------------------------------
+
+def _uid_str(u):
+    return u.decode() if isinstance(u, bytes) else str(u)
+
+
+def _parse_uid_from_meta(meta):
+    s = meta.decode(errors="replace") if isinstance(meta, bytes) else str(meta)
+    m = re.search(r"UID (\d+)", s)
+    return m.group(1) if m else None
+
+
+def _fetch_literal_batch(imap, uids, spec, chunk_size):
+    """Trae UID + <spec> (algo con literal, tipo BODY[HEADER] o RFC822) para
+    una lista de UIDs, en tandas de chunk_size por consulta IMAP. Devuelve
+    {uid_str: email.message.Message}."""
+    results = {}
+    uid_strs = [_uid_str(u) for u in uids]
+    for i in range(0, len(uid_strs), chunk_size):
+        chunk = uid_strs[i:i + chunk_size]
+        uid_set = ",".join(chunk)
+        typ, data = imap.uid("fetch", uid_set, f"(UID {spec})")
+        if typ != "OK" or not data:
+            raise RuntimeError(f"fetch en lote fallo (typ={typ}) para spec={spec}")
+        for item in data:
+            if isinstance(item, tuple) and len(item) == 2:
+                meta, literal = item
+                uid_str = _parse_uid_from_meta(meta)
+                if uid_str and literal:
+                    try:
+                        results[uid_str] = email.message_from_bytes(literal)
+                    except Exception:
+                        pass
+    return results
+
+
+def fetch_headers_batch(imap, uids, chunk_size=150):
+    """Solo encabezados (sin cuerpo) — para descartar mails fuera de ventana
+    de tiempo sin pagar el costo de bajar el cuerpo completo."""
+    return _fetch_literal_batch(imap, uids, "BODY.PEEK[HEADER]", chunk_size)
+
+
+def fetch_full_batch(imap, uids, chunk_size=100):
+    """Mensaje completo (con cuerpo) — solo para los UIDs que realmente vamos
+    a clasificar y guardar."""
+    return _fetch_literal_batch(imap, uids, "RFC822", chunk_size)
+
+
+def fetch_thrids_batch(imap, uids, chunk_size=150):
+    """X-GM-THRID (extension de Gmail) para varios UIDs de una — se usa como
+    clave estable para agrupar respuestas del mismo hilo a lo largo de
+    corridas, no para recorrer el hilo entero."""
+    results = {}
+    uid_strs = [_uid_str(u) for u in uids]
+    for i in range(0, len(uid_strs), chunk_size):
+        chunk = uid_strs[i:i + chunk_size]
+        uid_set = ",".join(chunk)
+        typ, data = imap.uid("fetch", uid_set, "(UID X-GM-THRID)")
+        if typ != "OK" or not data:
+            raise RuntimeError(f"fetch en lote fallo (typ={typ}) para X-GM-THRID")
+        for item in data:
+            if item is None:
+                continue
+            s = item.decode(errors="replace") if isinstance(item, bytes) else str(item)
+            uid_m = re.search(r"UID (\d+)", s)
+            thrid_m = re.search(r"X-GM-THRID\s+(\d+)", s)
+            if uid_m and thrid_m:
+                results[uid_m.group(1)] = format(int(thrid_m.group(1)), "x")
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Clasificacion: devuelve una lista de categorias aplicables (un mail puede
 # pertenecer a mas de una a la vez, ej. "it" + "escalamientosIT"), mas los
 # datos que necesita cada categoria (origen del hilo, cierre detectado).
+# No hace NINGUNA consulta IMAP propia — trabaja solo sobre el mensaje ya
+# descargado (el X-GM-THRID se resuelve aparte, en lote, en main()).
 # ---------------------------------------------------------------------------
 
-def classify(imap, uid, msg):
+def classify(msg):
     subject = decode_mime_header(msg.get("Subject")) or ""
     sender_raw = decode_mime_header(msg.get("From")) or ""
     sender_name, sender_addr = email.utils.parseaddr(sender_raw)
@@ -317,10 +345,6 @@ def classify(imap, uid, msg):
     if not categories:
         return None
 
-    thrid = None
-    if any(c in ("afectacionMasiva", "it", "ingenieria", "escalamientosIT") for c in categories):
-        thrid = gm_thread_id_hex(imap, uid)
-
     return {
         "categories": categories,
         "subject": subject,
@@ -332,7 +356,7 @@ def classify(imap, uid, msg):
         "first_seen_ms": first_seen_candidate,
         "is_first_of_chain": is_first_of_chain(msg),
         "closure_detected": closure_detected,
-        "thread_id": thrid,
+        "needs_thrid": any(c in CATEGORIES_NEEDING_THRID for c in categories),
         "body_text": body,
     }
 
@@ -435,7 +459,7 @@ def main():
     except Exception as e:
         log(f"No se pudo leer el ultimo checkpoint (last_uid) de la base: {type(e).__name__}: {e}")
 
-    # Tope maximo de cuanto se puede volver hacia atras SOLO quando todavia no
+    # Tope maximo de cuanto se puede volver hacia atras SOLO cuando todavia no
     # hay ningun checkpoint de UID guardado (primera corrida de la vida del
     # proyecto, o si se reseteo la base). Una vez que exista un last_uid, cada
     # corrida es puramente incremental y este limite ya no aplica.
@@ -443,8 +467,7 @@ def main():
 
     error_msg = None
     processed = 0
-    skipped_due_to_error = False
-    max_ok_uid = last_uid  # se va a ir subiendo a medida que confirmamos exito
+    max_ok_uid = last_uid
 
     try:
         imap = imaplib.IMAP4_SSL(IMAP_HOST, timeout=25)
@@ -457,7 +480,7 @@ def main():
             uids = data_uids[0].split() if typ == "OK" and data_uids and data_uids[0] else []
             # Gmail puede devolver el propio last_uid de nuevo si no hay nada
             # mas nuevo (comportamiento de "N:*" en IMAP); lo filtramos.
-            uids = [u for u in uids if int(u.decode() if isinstance(u, bytes) else u) > last_uid]
+            uids = [u for u in uids if int(_uid_str(u)) > last_uid]
             log(f"Candidatos nuevos (UID > {last_uid}): {len(uids)}")
         else:
             # Primera corrida: todavia no hay checkpoint de UID. Usamos SINCE
@@ -470,61 +493,62 @@ def main():
             uids = data_uids[0].split() if typ == "OK" and data_uids and data_uids[0] else []
             log(f"Primera corrida (sin checkpoint de UID) - candidatos (SINCE {since_date}): {len(uids)}")
 
-        for uid in uids:
-            uid_int = int(uid.decode() if isinstance(uid, bytes) else uid)
-            try:
-                if last_uid is None:
-                    # Modo bootstrap: SINCE trae candidatos de todo un dia, asi
-                    # que primero miramos solo el encabezado (barato) para
-                    # descartar los que caen fuera de la ventana ANTES de
-                    # bajar el cuerpo completo.
-                    header_msg = fetch_header_only(imap, uid)
-                    if header_msg is None:
-                        raise RuntimeError("no se pudo bajar el encabezado")
-                    header_own_ms = epoch_ms_from_date_header(header_msg)
-                    out_of_window = (
-                        header_own_ms is None
-                        or header_own_ms < (now_ms - MAX_LOOKBACK_MS)
-                        or header_own_ms > now_ms + 5 * 60 * 1000
-                    )
-                    if out_of_window:
-                        if not skipped_due_to_error:
-                            max_ok_uid = uid_int
+        if uids:
+            uids_sorted = sorted(uids, key=lambda u: int(_uid_str(u)))
+
+            if last_uid is None:
+                # Modo bootstrap: primero los encabezados (en lote, barato),
+                # para descartar lo que cae fuera de la ventana ANTES de
+                # bajar el cuerpo completo de cada mail.
+                headers = fetch_headers_batch(imap, uids_sorted)
+                in_window_uids = []
+                for u in uids_sorted:
+                    uid_str = _uid_str(u)
+                    hmsg = headers.get(uid_str)
+                    if hmsg is None:
                         continue
+                    h_ms = epoch_ms_from_date_header(hmsg)
+                    if h_ms is None:
+                        continue
+                    if (now_ms - MAX_LOOKBACK_MS) <= h_ms <= now_ms + 5 * 60 * 1000:
+                        in_window_uids.append(u)
+                log(f"Dentro de ventana tras chequear encabezados: {len(in_window_uids)}")
+                fetch_targets = in_window_uids
+            else:
+                fetch_targets = uids_sorted
 
-                # Modo incremental (o bootstrap ya dentro de ventana): bajamos
-                # el mensaje completo, que es lo unico que hace falta para
-                # clasificar.
-                msg = fetch_message(imap, uid)
+            full_msgs = fetch_full_batch(imap, fetch_targets)
+
+            results_by_uid = {}
+            for u in fetch_targets:
+                uid_str = _uid_str(u)
+                msg = full_msgs.get(uid_str)
                 if msg is None:
-                    raise RuntimeError("no se pudo bajar el mensaje completo")
+                    continue
+                result = classify(msg)
+                if result is not None:
+                    results_by_uid[uid_str] = result
 
-                own_ms = epoch_ms_from_date_header(msg)
-                if own_ms is not None:
-                    result = classify(imap, uid, msg)
-                    if result is not None:
-                        uid_str = uid.decode() if isinstance(uid, bytes) else uid
-                        record_id = result["thread_id"] or f"uid-{uid_str}"
-                        for category in result["categories"]:
-                            sb.upsert_mail(record_id, result["thread_id"], category, result, own_ms)
-                        processed += 1
+            needing_thrid = [uid_str for uid_str, r in results_by_uid.items() if r["needs_thrid"]]
+            thrids = fetch_thrids_batch(imap, needing_thrid) if needing_thrid else {}
 
-                # Si no hubo ninguna falla hasta ahora, este UID queda
-                # confirmado como "visto" y el checkpoint puede avanzar hasta
-                # aca. Si algo fallo antes, dejamos de avanzar para poder
-                # reintentar ese mail en la proxima corrida (los que vengan
-                # despues, si se procesan bien igual, no hacen dano: el
-                # upsert es idempotente).
-                if not skipped_due_to_error:
-                    max_ok_uid = uid_int
-            except Exception as e:
-                skipped_due_to_error = True
-                log(f"[uid={uid}] error procesando, se saltea: {type(e).__name__}: {e}")
-                continue
+            for u in fetch_targets:
+                uid_str = _uid_str(u)
+                result = results_by_uid.get(uid_str)
+                if result is None:
+                    continue
+                thrid = thrids.get(uid_str)
+                record_id = thrid or f"uid-{uid_str}"
+                for category in result["categories"]:
+                    sb.upsert_mail(record_id, thrid, category, result, result["sent_at_ms"])
+                processed += 1
+
+            # Todo el lote se proceso sin excepciones: el checkpoint avanza
+            # hasta el UID mas alto que vimos (aunque algunos hayan quedado
+            # fuera de ventana o sin categoria, ya los "vimos").
+            max_ok_uid = int(_uid_str(uids_sorted[-1]))
 
         imap.logout()
-        if skipped_due_to_error:
-            error_msg = "Algunos mails no se pudieron procesar (timeouts); se reintentan en la proxima corrida"
     except Exception as e:
         error_msg = f"{type(e).__name__}: {e}"
         log(f"ERROR durante la corrida: {error_msg}")
