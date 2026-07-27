@@ -1,15 +1,18 @@
 name: Resumen LAB - actualizar mails
 
 on:
-  schedule:
-    # cada 15 minutos (el disparador externo de cron-job.org tambien pega
-    # cada tanto via workflow_dispatch, este queda como respaldo)
-    - cron: '*/15 * * * *'
+  # Sin cron nativo de GitHub: se demostro poco confiable (dejaba de disparar
+  # solo despues de las primeras corridas) y ademas podia solaparse con el
+  # disparador externo y matar corridas a mitad de camino. El unico disparador
+  # automatico es el externo (cron-job.org, cada 30 min via workflow_dispatch).
   workflow_dispatch: {}
 
 concurrency:
   group: resumen-lab-update
-  cancel-in-progress: true
+  # No cancelar una corrida en progreso: si llega un segundo disparo mientras
+  # la anterior sigue corriendo, se encola en vez de matarla (evita perder
+  # progreso cuando el script tarda mas que el intervalo entre disparos).
+  cancel-in-progress: false
 
 jobs:
   update:
