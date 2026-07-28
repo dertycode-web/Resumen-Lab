@@ -60,6 +60,14 @@ IT_AREA_ADDR_HINTS = [
 IT_RECIPIENT_ADDR_HINTS = IT_AREA_ADDR_HINTS
 ING_RECIPIENT_KEYWORDS = ["soc", "voc", "noc"]
 
+# "Operacion X": cualquier mail (de cualquier remitente) que tenga esta
+# direccion en To o Cc. Nuevo/EnCurso se resuelve en el frontend segun la
+# antiguedad de la cadena (umbral de 6hs, igual que la ventana en vivo del
+# Resumen).
+OPERACION_TECNICA_ADDR = "dl-ar-supervisionsacsci@claro.com.ar"
+OPERACION_MSK_ADDR = "comunicacionescec_msk@claro.com.ar"
+OPERACION_LY_ADDR = "loyaltyclaro@claro.com.ar"
+
 CLOSURE_PATTERNS = [
     r"evento\s+solucionado",
     r"\bsolucionado\b",
@@ -74,7 +82,10 @@ MAX_BODY_CHARS = 20000  # tope defensivo, por si algun mail viene con un cuerpo 
 
 # Categorias que necesitan el X-GM-THRID (para agrupar respuestas del mismo
 # hilo a lo largo de corridas / detectar cuanto hace que arranco la cadena).
-CATEGORIES_NEEDING_THRID = {"afectacionMasiva", "it", "ingenieria", "escalamientosIT", "afectacionesMasivasIT"}
+CATEGORIES_NEEDING_THRID = {
+    "afectacionMasiva", "it", "ingenieria", "escalamientosIT", "afectacionesMasivasIT",
+    "operacionTecnica", "operacionMSK", "operacionLY",
+}
 
 
 def log(msg):
@@ -559,6 +570,20 @@ def classify(msg, body):
         and is_first_of_chain(msg)
     ):
         categories.append("afectacionesMasivasIT")
+        add_origin_candidates()
+
+    # 7. "Operacion Tecnica / MSK / LY": cualquier mail (de cualquier
+    # remitente) que tenga la direccion correspondiente en To o Cc. El split
+    # Nuevo/EnCurso se resuelve en el frontend segun cuanto hace que arranco
+    # la cadena (first_seen_ms), no aca.
+    if OPERACION_TECNICA_ADDR in recipients_text:
+        categories.append("operacionTecnica")
+        add_origin_candidates()
+    if OPERACION_MSK_ADDR in recipients_text:
+        categories.append("operacionMSK")
+        add_origin_candidates()
+    if OPERACION_LY_ADDR in recipients_text:
+        categories.append("operacionLY")
         add_origin_candidates()
 
     if not categories:

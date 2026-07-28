@@ -288,13 +288,14 @@
   ];
 
   // Mapa generico: que categorias guardadas en la base se parten en
-  // Nuevo/EnCurso segun antiguedad, vs. cuales van directo a un solo bucket.
+  // Nuevo/EnCurso segun antiguedad (con su propio umbral en horas), vs.
+  // cuales van directo a un solo bucket.
   var AGE_SPLIT_CATEGORY_KEYS = {
-    it: ["itNuevo", "itEnCurso"],
-    ingenieria: ["ingenieriaNuevo", "ingenieriaEnCurso"],
-    operacionTecnica: ["operacionTecnicaNuevo", "operacionTecnicaEnCurso"],
-    operacionMSK: ["operacionMSKNuevo", "operacionMSKEnCurso"],
-    operacionLY: ["operacionLYNuevo", "operacionLYEnCurso"]
+    it: { keys: ["itNuevo", "itEnCurso"], thresholdHours: 5 },
+    ingenieria: { keys: ["ingenieriaNuevo", "ingenieriaEnCurso"], thresholdHours: 5 },
+    operacionTecnica: { keys: ["operacionTecnicaNuevo", "operacionTecnicaEnCurso"], thresholdHours: 6 },
+    operacionMSK: { keys: ["operacionMSKNuevo", "operacionMSKEnCurso"], thresholdHours: 6 },
+    operacionLY: { keys: ["operacionLYNuevo", "operacionLYEnCurso"], thresholdHours: 6 }
   };
   var DIRECT_CATEGORY_KEYS = ["afectacionMasiva", "pedidosReferentes", "informesFija", "informesMovil"];
 
@@ -393,11 +394,11 @@
     sorted.forEach(function (m) {
       (m.categories || []).forEach(function (cat) {
         if (AGE_SPLIT_CATEGORY_KEYS[cat]) {
-          var pair = AGE_SPLIT_CATEGORY_KEYS[cat];
-          if (!(pair[0] in buckets)) return;
+          var conf = AGE_SPLIT_CATEGORY_KEYS[cat];
+          if (!(conf.keys[0] in buckets)) return;
           var originMs = (typeof m.firstSeenMs === "number") ? m.firstSeenMs : m.sentAtMs;
           var ageHours = (nowMs - originMs) / 3600000;
-          var key = ageHours >= 5 ? pair[1] : pair[0];
+          var key = ageHours >= conf.thresholdHours ? conf.keys[1] : conf.keys[0];
           buckets[key].push({ subject: m.subject, ageHours: ageHours, originMs: originMs });
         } else if (DIRECT_CATEGORY_KEYS.indexOf(cat) !== -1) {
           if (!(cat in buckets)) return;
