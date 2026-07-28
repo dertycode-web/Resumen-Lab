@@ -352,7 +352,7 @@
     sorted.forEach(function (m) {
       (m.categories || []).forEach(function (cat) {
         if (cat in buckets) {
-          buckets[cat].push({ subject: m.subject, resolved: m.resolved === true });
+          buckets[cat].push({ subject: m.subject, resolved: m.resolved === true, originMs: (typeof m.firstSeenMs === "number") ? m.firstSeenMs : m.sentAtMs });
         }
       });
     });
@@ -455,9 +455,9 @@
           buckets[key].push({ subject: m.subject, ageHours: ageHours, originMs: originMs });
         } else if (DIRECT_CATEGORY_KEYS.indexOf(cat) !== -1) {
           if (!(cat in buckets)) return;
-          buckets[cat].push({ subject: m.subject, resolved: m.resolved === true });
+          buckets[cat].push({ subject: m.subject, resolved: m.resolved === true, originMs: (typeof m.firstSeenMs === "number") ? m.firstSeenMs : m.sentAtMs });
         } else if (cat in buckets) {
-          buckets[cat].push({ subject: m.subject, resolved: m.resolved === true });
+          buckets[cat].push({ subject: m.subject, resolved: m.resolved === true, originMs: (typeof m.firstSeenMs === "number") ? m.firstSeenMs : m.sentAtMs });
         }
       });
     });
@@ -516,8 +516,46 @@
           row.style.cssText = "font-size:14.5px;line-height:1.5;padding:8px 6px;border-radius:8px;color:" + (resolved ? "var(--text-muted)" : "var(--text-primary)") + ";" + (resolved ? "text-decoration:line-through;text-decoration-color:var(--text-muted);" : "") + (hasOrigin ? "cursor:pointer;" : "");
           var age = typeof item.ageHours === "number" ? "<span style='color:var(--text-muted);font-weight:500;'> · " + fmtDuration(item.ageHours) + (hasOrigin ? " ▾" : "") + "</span>" : "";
           var check = resolved ? "<span style='text-decoration:none;color:#1f9d63;font-weight:700;'>✓ </span>" : "";
+
           var mainLine = document.createElement("div");
-          mainLine.innerHTML = check + "- " + (item.subject || "(sin asunto)") + age;
+          mainLine.style.cssText = "display:flex;align-items:flex-start;gap:6px;justify-content:space-between;";
+
+          var textSpan = document.createElement("span");
+          textSpan.style.cssText = "flex:1;min-width:0;";
+          textSpan.innerHTML = check + "- " + (item.subject || "(sin asunto)") + age;
+          mainLine.appendChild(textSpan);
+
+          var copyBtn = document.createElement("button");
+          copyBtn.type = "button";
+          copyBtn.title = "Copiar nombre de la cadena";
+          copyBtn.textContent = "📋";
+          copyBtn.style.cssText = "flex-shrink:0;border:none;background:transparent;cursor:pointer;font-size:13px;padding:2px 4px;border-radius:6px;opacity:0.6;line-height:1;";
+          copyBtn.addEventListener("mouseenter", function () { copyBtn.style.opacity = "1"; });
+          copyBtn.addEventListener("mouseleave", function () { copyBtn.style.opacity = "0.6"; });
+          copyBtn.addEventListener("click", function (ev) {
+            ev.stopPropagation();
+            var textToCopy = item.subject || "";
+            var doneFeedback = function () {
+              var prev = copyBtn.textContent;
+              copyBtn.textContent = "✅";
+              setTimeout(function () { copyBtn.textContent = prev; }, 1200);
+            };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(textToCopy).then(doneFeedback).catch(doneFeedback);
+            } else {
+              var ta = document.createElement("textarea");
+              ta.value = textToCopy;
+              ta.style.position = "fixed";
+              ta.style.opacity = "0";
+              document.body.appendChild(ta);
+              ta.select();
+              try { document.execCommand("copy"); } catch (e) {}
+              document.body.removeChild(ta);
+              doneFeedback();
+            }
+          });
+          mainLine.appendChild(copyBtn);
+
           row.appendChild(mainLine);
 
           if (hasOrigin) {
