@@ -42,6 +42,16 @@ MARIA_INES_HINT = "maria ines emiliani"
 AFECTACION_MASIVA_CLIENTES_ADDR = "argentinaafectacionmasivaaclientes@claro.com.ar"
 REMEDY_AMX_SENDER = "remedy.amx@mail.telcel.com"
 
+# Sub-division de "Escalamientos IT" del lapso, por area exacta (remitente):
+GIM_ADDR = "incidentereportado@claro.com.ar"
+HDB_ADDR = "hdbilletera@claro.com.ar"
+HELPDESK_ADDR = "helpdesk@claro.com.ar"
+
+# Sub-division de "Escalamientos ING" del lapso, por destinatario ("para"):
+VOC_ADDR = "voc@claro.com.ar"
+SOC_ADDR = "soc@claro.com.ar"
+NOC_ADDR = "noc@claro.com.ar"
+
 IT_RECIPIENT_KEYWORDS = [
     "gestion de incidentes masivos",
     "gestión de incidentes masivos",
@@ -90,7 +100,9 @@ MAX_BODY_CHARS = 20000  # tope defensivo, por si algun mail viene con un cuerpo 
 CATEGORIES_NEEDING_THRID = {
     "afectacionMasiva", "it", "ingenieria", "escalamientosIT", "afectacionesMasivasIT",
     "operacionTecnica", "operacionMSK", "operacionLY",
-    "afectacionMasivaLapso", "escalamientosITLapso", "escalamientosINGLapso",
+    "afectacionMasivaLapso",
+    "escalamientosIT_GIM", "escalamientosIT_HDB", "escalamientosIT_HelpDesk",
+    "escalamientosING_VOC", "escalamientosING_SOC", "escalamientosING_NOC",
 }
 
 
@@ -596,27 +608,26 @@ def classify(msg, body):
     # rango puntual, sin split Nuevo/EnCurso. Reglas propias, DISTINTAS de
     # las que arman las otras solapas (mismo nombre de tema, criterio distinto):
     #  - Afectaciones masivas: mail ENVIADO A (To/Cc) la direccion de clientes.
-    #  - Escalamientos IT: mail que VIENE DESDE alguna de las 3 areas de IT
-    #    (al reves que en la solapa Escalamientos IT, que mira Reportes
-    #    Tecnica -> areas de IT).
-    #  - Escalamientos ING: mail de Remedy AMX (sistema de tickets externo)
-    #    dirigido a Reportes Tecnica.
+    #  - Escalamientos IT: se divide por area de origen (remitente exacto):
+    #    GIM (incidentereportado), HDB (hdbilletera), HelpDesk (helpdesk).
+    #  - Escalamientos ING: se divide por destinatario ("para"): VOC, SOC,
+    #    NOC. Cualquier remitente cuenta, solo importa el "para".
     if AFECTACION_MASIVA_CLIENTES_ADDR in recipients_text:
         categories.append("afectacionMasivaLapso")
-    if sender_addr in IT_AREA_ADDR_HINTS:
-        categories.append("escalamientosITLapso")
-    # Escalamientos ING del lapso: combina dos flujos que en la practica son
-    # el mismo tipo de escalamiento a Ingenieria pero en direcciones opuestas
-    # (pedido del usuario, para que coincida con lo que ya se ve en la
-    # solapa Resumen normal, categoria "ingenieria"):
-    #  a) Remedy AMX (sistema externo de tickets) -> Reportes Tecnicas
-    #  b) Reportes Tecnica -> SOC/VOC/NOC (igual criterio que "ingenieria")
-    _es_remedy_a_reportes = sender_addr == REMEDY_AMX_SENDER and REPORTES_TECNICA_HINT in recipients_text
-    _es_reportes_a_ing = REPORTES_TECNICA_HINT in sender_addr and any(
-        re.search(r"\b" + re.escape(k) + r"\b", recipients_text) for k in ING_RECIPIENT_KEYWORDS
-    )
-    if _es_remedy_a_reportes or _es_reportes_a_ing:
-        categories.append("escalamientosINGLapso")
+
+    if sender_addr == GIM_ADDR:
+        categories.append("escalamientosIT_GIM")
+    if sender_addr == HDB_ADDR:
+        categories.append("escalamientosIT_HDB")
+    if sender_addr == HELPDESK_ADDR:
+        categories.append("escalamientosIT_HelpDesk")
+
+    if VOC_ADDR in to_text.lower():
+        categories.append("escalamientosING_VOC")
+    if SOC_ADDR in to_text.lower():
+        categories.append("escalamientosING_SOC")
+    if NOC_ADDR in to_text.lower():
+        categories.append("escalamientosING_NOC")
 
     if not categories:
         return None
