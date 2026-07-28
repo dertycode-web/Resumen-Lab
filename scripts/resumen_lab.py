@@ -20,6 +20,7 @@ el mismo trabajo se hace en unas pocas consultas en total.
 
 import email
 import email.utils
+import html
 import imaplib
 import json
 import os
@@ -1036,6 +1037,115 @@ def run_provision_users(sb, mapping_text):
     log(f"[provision] Listo. OK: {ok}, con error: {failed}.")
 
 
+# ---------------------------------------------------------------------------
+# Fixture de Boca Juniors (widget del dashboard, solo para 3 usuarios).
+# Se actualiza como mucho una vez por semana (los lunes, hora Argentina),
+# leyendo la pagina publica de Promiedos. Si el scraping falla por lo que
+# sea (la pagina cambio de estructura, no responde, etc.) simplemente se
+# loguea el error y se sigue de largo — nunca debe romper la corrida normal
+# de clasificacion de mails.
+# ---------------------------------------------------------------------------
+
+BOCA_FIXTURE_URL = "https://www.promiedos.com.ar/team/boca-juniors/igg"
+BOCA_DATE_RE = re.compile(r"^\d{2}/\d{2}$")
+BOCA_LV_RE = re.compile(r"^[LV]$")
+BOCA_TIME_RE = re.compile(r"^\d{1,2}:\d{2}$")
+BOCA_SCORE_RE = re.compile(r"^\d+\s*-\s*\d+$")
+
+
+def _html_to_lines(raw_html):
+    # Sin dependencias externas (no hay BeautifulSoup instalado): saca
+    # scripts/estilos, convierte cierres de fila/celda/salto de linea en
+    # saltos de linea reales, tira el resto de las etiquetas, y devuelve
+    # las lineas de texto visibles, sin vacias.
+    html_clean = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", raw_html)
+    html_clean = re.sub(r"(?i)<(br|/tr|/td|/div|/li|/p)\s*/?>", "\n", html_clean)
+    html_clean = re.sub(r"<[^>]+>", "", html_clean)
+    html_clean = html.unescape(html_clean)
+    lines = [ln.strip() for ln in html_clean.splitlines()]
+    return [ln for ln in lines if ln]
+
+
+def _find_section(lines, start_pattern, end_patterns):
+    start_re = re.compile(start_pattern, re.IGNORECASE)
+    start_idx = None
+    for i, ln in enumerate(lines):
+        if start_re.search(ln):
+            start_idx = i + 1
+            break
+    if start_idx is None:
+        return []
+    end_res = [re.compile(p, re.IGNORECASE) for p in end_patterns]
+    end_idx = len(lines)
+    for i in range(start_idx, len(lines)):
+        if any(er.search(lines[i]) for er in end_res):
+            end_idx = i
+            break
+    return lines[start_idx:end_idx]
+
+
+def _parse_boca_rows(section_lines, last_field_re, max_rows=5):
+    rows = []
+    i = 0
+    while i < len(section_lines) and len(rows) < max_rows:
+        if BOCA_DATE_RE.match(section_lines[i]):
+            if i + 3 < len(section_lines):
+                dia, lv, rival, last = section_lines[i:i + 4]
+                if BOCA_LV_RE.match(lv) and last_field_re.match(last.replace(" ", "")):
+                    rows.append({"dia": dia, "lv": lv, "rival": rival, "valor": last.replace(" ", "")})
+                    i += 4
+                    continue
+        i += 1
+    return rows
+
+
+def scrape_boca_fixture():
+    req = urllib.request.Request(
+        BOCA_FIXTURE_URL,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; ResumenLabBot/1.0)"},
+    )
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        raw_html = resp.read().decode("utf-8", errors="replace")
+
+    lines = _html_to_lines(raw_html)
+    proximos_section = _find_section(lines, r"PR[OÓ]XIMOS PARTIDOS", [r"^VER\s+M[AÁ]S$", r"^Resultados$"])
+    resultados_section = _find_section(lines, r"^Resultados$", [r"^VER\s+M[AÁ]S$", r"PLANTEL"])
+
+    proximos = _parse_boca_rows(proximos_section, BOCA_TIME_RE)
+    resultados = _parse_boca_rows(resultados_section, BOCA_SCORE_RE)
+
+    if not proximos and not resultados:
+        raise ValueError("no se pudo extraer ningun partido (la pagina puede haber cambiado de estructura)")
+
+    return {
+        "proximos": [{"dia": r["dia"], "lv": r["lv"], "rival": r["rival"], "hora": r["valor"]} for r in proximos],
+        "resultados": [{"dia": r["dia"], "lv": r["lv"], "rival": r["rival"], "resultado": r["valor"]} for r in resultados],
+    }
+
+
+def update_boca_fixture(sb, now_ms, force=False):
+    dt_arg = datetime.fromtimestamp(now_ms / 1000, tz=timezone.utc) - timedelta(hours=3)
+    if not force and dt_arg.weekday() != 0:  # 0 = lunes
+        return
+    today_str = dt_arg.strftime("%Y-%m-%d")
+    try:
+        last_monday = sb.get_meta("boca_fixture_last_monday")
+    except Exception as e:
+        log(f"[boca] no se pudo leer checkpoint: {type(e).__name__}: {e}")
+        last_monday = None
+    if not force and last_monday == today_str:
+        return  # ya se actualizo este lunes
+
+    try:
+        data = scrape_boca_fixture()
+        data["updated_at"] = now_ms
+        sb.set_meta("boca_fixture", data)
+        sb.set_meta("boca_fixture_last_monday", today_str)
+        log(f"[boca] fixture actualizado: {len(data['proximos'])} proximos, {len(data['resultados'])} resultados")
+    except Exception as e:
+        log(f"[boca] ERROR actualizando fixture: {type(e).__name__}: {e}")
+
+
 def main():
     supabase_url = os.environ.get("SUPABASE_URL")
     supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
@@ -1065,6 +1175,15 @@ def main():
         sys.exit(0)
 
     sb = SupabaseClient(supabase_url, supabase_key)
+
+    # Widget de fixture de Boca (solo se actualiza los lunes; no-op el resto
+    # de los dias, salvo que se fuerce con BOCA_FORCE_UPDATE=1 para probar).
+    # Nunca debe frenar la corrida de mails si falla.
+    try:
+        force_boca = (os.environ.get("BOCA_FORCE_UPDATE") or "").strip().lower() in ("1", "true", "yes")
+        update_boca_fixture(sb, now_ms, force=force_boca)
+    except Exception as e:
+        log(f"[boca] ERROR inesperado: {type(e).__name__}: {e}")
 
     try:
         cooldown_until = sb.get_meta("quota_cooldown_until")

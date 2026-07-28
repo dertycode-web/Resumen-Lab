@@ -200,6 +200,16 @@
 
 </div>
 
+<div id="bocaWidget" style="display:none;position:fixed;right:18px;bottom:18px;z-index:80;width:280px;font-size:12.5px;">
+  <button id="bocaToggle" type="button" style="width:100%;text-align:left;border:1px solid var(--card-border);border-radius:12px;padding:9px 13px;background:var(--card-bg);box-shadow:var(--shadow-soft);cursor:pointer;font-size:13px;font-weight:700;color:var(--text-title);display:flex;align-items:center;justify-content:space-between;gap:8px;">
+    <span>⚽ Boca Juniors</span>
+    <span id="bocaToggleIcon" style="color:var(--text-muted);font-size:11px;">▲</span>
+  </button>
+  <div id="bocaPanel" style="display:none;margin-top:7px;border:1px solid var(--card-border);border-radius:12px;background:var(--card-bg);box-shadow:var(--shadow-soft);padding:11px 13px;max-height:340px;overflow-y:auto;">
+    <div id="bocaContent" style="font-size:11.5px;color:var(--text-secondary);">Cargando…</div>
+  </div>
+</div>
+
 <script id="supabase-config" type="application/json">
 {
   "url": "https://afcowvvrkhborbjndwjo.supabase.co",
@@ -321,12 +331,101 @@
       appBootstrapped = true;
       bootstrap();
     }
+    setupBocaWidget(username);
   }
+
+  // ---- Widget de Boca Juniors: solo para 3 usuarios, desplegable cerrado
+  // por defecto, abajo a la derecha. Se actualiza sola una vez por semana
+  // (los lunes) desde el script de Python; ac solo se lee y se muestra. ----
+  var BOCA_ALLOWED_USERS = ["Alejandro_Bonnet", "Lautaro_Rojas", "Matias_Yance"];
+  var bocaWidgetEl = document.getElementById("bocaWidget");
+  var bocaToggleEl = document.getElementById("bocaToggle");
+  var bocaToggleIconEl = document.getElementById("bocaToggleIcon");
+  var bocaPanelEl = document.getElementById("bocaPanel");
+  var bocaContentEl = document.getElementById("bocaContent");
+  var bocaLoaded = false;
+
+  function setupBocaWidget(username) {
+    if (BOCA_ALLOWED_USERS.indexOf(username) === -1) {
+      bocaWidgetEl.style.display = "none";
+      return;
+    }
+    bocaWidgetEl.style.display = "block";
+    if (!bocaLoaded) {
+      bocaLoaded = true;
+      loadBocaFixture();
+    }
+  }
+
+  function bocaRowHtml(dia, lv, rival, valueHtml) {
+    return "<div style='display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--divider);'>" +
+      "<span style='width:36px;flex-shrink:0;color:var(--text-muted);'>" + dia + "</span>" +
+      "<span style='width:14px;flex-shrink:0;font-weight:700;color:var(--text-muted);'>" + lv + "</span>" +
+      "<span style='flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-primary);'>" + rival + "</span>" +
+      "<span style='flex-shrink:0;font-weight:700;'>" + valueHtml + "</span>" +
+      "</div>";
+  }
+
+  function bocaResultBadge(resultado) {
+    var parts = (resultado || "").split("-");
+    if (parts.length !== 2) return resultado;
+    var boca = parseInt(parts[0], 10), rival = parseInt(parts[1], 10);
+    var color = "var(--text-muted)";
+    if (!isNaN(boca) && !isNaN(rival)) {
+      if (boca > rival) color = "#1f9d63";
+      else if (boca < rival) color = "#c0392b";
+    }
+    return "<span style='color:" + color + ";'>" + resultado + "</span>";
+  }
+
+  function loadBocaFixture() {
+    bocaContentEl.textContent = "Cargando…";
+    fetch(SUPABASE_URL + "/rest/v1/meta?key=eq.boca_fixture&select=value", { headers: authHeaders() })
+      .then(function (r) { return r.json(); })
+      .then(function (rows) {
+        var data = rows && rows[0] && rows[0].value;
+        if (!data) {
+          bocaContentEl.textContent = "Todavía no hay datos cargados.";
+          return;
+        }
+        var html = "";
+        html += "<div style='font-weight:700;color:var(--text-title);margin-bottom:4px;'>Próximos partidos</div>";
+        if (data.proximos && data.proximos.length) {
+          data.proximos.forEach(function (p) {
+            html += bocaRowHtml(p.dia, p.lv, p.rival, p.hora);
+          });
+        } else {
+          html += "<div style='color:var(--text-muted);padding:4px 0;'>Sin datos</div>";
+        }
+        html += "<div style='font-weight:700;color:var(--text-title);margin:10px 0 4px;'>Resultados</div>";
+        if (data.resultados && data.resultados.length) {
+          data.resultados.forEach(function (r) {
+            html += bocaRowHtml(r.dia, r.lv, r.rival, bocaResultBadge(r.resultado));
+          });
+        } else {
+          html += "<div style='color:var(--text-muted);padding:4px 0;'>Sin datos</div>";
+        }
+        if (data.updated_at) {
+          html += "<div style='color:var(--text-muted);margin-top:8px;font-size:10.5px;'>Actualizado " + fmt(data.updated_at) + "</div>";
+        }
+        bocaContentEl.innerHTML = html;
+      })
+      .catch(function () {
+        bocaContentEl.textContent = "No se pudo cargar el fixture.";
+      });
+  }
+
+  bocaToggleEl.addEventListener("click", function () {
+    var isOpen = bocaPanelEl.style.display !== "none";
+    bocaPanelEl.style.display = isOpen ? "none" : "block";
+    bocaToggleIconEl.textContent = isOpen ? "▲" : "▼";
+  });
 
   function showLoginGate() {
     appRootEl.style.display = "none";
     logoutBtnEl.style.display = "none";
     sessionUserLabelEl.textContent = "";
+    bocaWidgetEl.style.display = "none";
     authRootEl.style.display = "block";
     showAuthScreen("login");
   }

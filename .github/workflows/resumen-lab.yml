@@ -24,6 +24,13 @@ on:
           guardado en el repo — solo vive en esta corrida puntual).
         required: false
         default: ""
+      boca_force_update:
+        description: >-
+          Poner "true" para forzar la actualizacion del fixture de Boca
+          ahora mismo (sin esperar al lunes) — solo para probar el scraping.
+          Dejar vacio en corridas normales.
+        required: false
+        default: ""
 
 concurrency:
   group: resumen-lab-update
@@ -51,4 +58,5 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           BACKFILL_HOURS: ${{ github.event.inputs.backfill_hours }}
           PROVISION_USERS: ${{ github.event.inputs.provision_users }}
+          BOCA_FORCE_UPDATE: ${{ github.event.inputs.boca_force_update }}
         run: python scripts/resumen_lab.py
