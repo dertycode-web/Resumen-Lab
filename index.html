@@ -288,7 +288,7 @@
     authRootEl.style.display = "none";
     appRootEl.style.display = "block";
     logoutBtnEl.style.display = "inline-flex";
-    sessionUserLabelEl.textContent = username ? username : "";
+    sessionUserLabelEl.textContent = username ? username.replace(/_/g, " ") : "";
     if (!appBootstrapped) {
       appBootstrapped = true;
       bootstrap();
