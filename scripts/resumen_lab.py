@@ -37,6 +37,11 @@ AFECTACION_MASIVA_SENDER = "argentinaafectacionmasiva@claro.com.ar"
 REPORTES_TECNICA_HINT = "reportestecnica"  # matches reportestecnica@ and reportestecnicas@
 MARIA_INES_HINT = "maria ines emiliani"
 
+# --- Especificas de "Resumen por lapso" (reglas propias, no comparten logica
+# con las otras solapas aunque el nombre se parezca) ---
+AFECTACION_MASIVA_CLIENTES_ADDR = "argentinaafectacionmasivaaclientes@claro.com.ar"
+REMEDY_AMX_SENDER = "remedy.amx@mail.telcel.com"
+
 IT_RECIPIENT_KEYWORDS = [
     "gestion de incidentes masivos",
     "gestión de incidentes masivos",
@@ -85,6 +90,7 @@ MAX_BODY_CHARS = 20000  # tope defensivo, por si algun mail viene con un cuerpo 
 CATEGORIES_NEEDING_THRID = {
     "afectacionMasiva", "it", "ingenieria", "escalamientosIT", "afectacionesMasivasIT",
     "operacionTecnica", "operacionMSK", "operacionLY",
+    "afectacionMasivaLapso", "escalamientosITLapso", "escalamientosINGLapso",
 }
 
 
@@ -585,6 +591,22 @@ def classify(msg, body):
     if OPERACION_LY_ADDR in recipients_text:
         categories.append("operacionLY")
         add_origin_candidates()
+
+    # 8. Especificas de "Resumen por lapso": listan asuntos dentro de un
+    # rango puntual, sin split Nuevo/EnCurso. Reglas propias, DISTINTAS de
+    # las que arman las otras solapas (mismo nombre de tema, criterio distinto):
+    #  - Afectaciones masivas: mail ENVIADO A (To/Cc) la direccion de clientes.
+    #  - Escalamientos IT: mail que VIENE DESDE alguna de las 3 areas de IT
+    #    (al reves que en la solapa Escalamientos IT, que mira Reportes
+    #    Tecnica -> areas de IT).
+    #  - Escalamientos ING: mail de Remedy AMX (sistema de tickets externo)
+    #    dirigido a Reportes Tecnica.
+    if AFECTACION_MASIVA_CLIENTES_ADDR in recipients_text:
+        categories.append("afectacionMasivaLapso")
+    if sender_addr in IT_AREA_ADDR_HINTS:
+        categories.append("escalamientosITLapso")
+    if sender_addr == REMEDY_AMX_SENDER and REPORTES_TECNICA_HINT in recipients_text:
+        categories.append("escalamientosINGLapso")
 
     if not categories:
         return None

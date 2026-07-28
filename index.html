@@ -135,7 +135,7 @@
   <div id="cards" style="display:grid;grid-template-columns:1fr 1fr;gap:18px;"></div>
   <div id="cardsEscIT" style="display:none;grid-template-columns:1fr;gap:18px;"></div>
   <div id="cardsTareas" style="display:none;grid-template-columns:1fr;gap:18px;"></div>
-  <div id="cardsLapso" style="display:none;grid-template-columns:1fr 1fr;gap:18px;"></div>
+  <div id="cardsLapso" style="display:none;grid-template-columns:1fr;gap:18px;"></div>
 
 </div>
 
@@ -306,6 +306,41 @@
     { key: "escalamientosITEnCurso", label: "Escalamientos IT · En curso", icon: "🔥", rgb: "214,127,17" },
     { key: "afectacionesMasivasIT", label: "Afectaciones masivas IT", icon: "🚨", rgb: "216,71,47" }
   ];
+
+  // Solapa aparte "Resumen por lapso": listado plano (sin split Nuevo/EnCurso)
+  // por rango de fechas elegido a mano. Usa 6 categorias propias, con reglas
+  // de clasificacion DISTINTAS de las que arman las otras solapas aunque
+  // "operacionTecnica"/"operacionMSK"/"operacionLY" compartan nombre con las
+  // de Resumen (ahi si se parten en Nuevo/EnCurso; aca van planas).
+  var LAPSO_META = [
+    { key: "afectacionMasivaLapso", label: "Afectaciones masivas", icon: "🚨", rgb: "216,71,47" },
+    { key: "escalamientosITLapso", label: "Escalamientos IT", icon: "🆘", rgb: "44,123,229" },
+    { key: "escalamientosINGLapso", label: "Escalamientos ING", icon: "🛠️", rgb: "76,139,43" },
+    { key: "operacionTecnica", label: "Operación Técnica", icon: "📡", rgb: "6,148,162" },
+    { key: "operacionMSK", label: "Operación MSK", icon: "🧭", rgb: "138,92,214" },
+    { key: "operacionLY", label: "Operación Loyalty", icon: "🎯", rgb: "199,120,17" }
+  ];
+  var LAPSO_CATEGORY_KEYS = LAPSO_META.map(function (m) { return m.key; });
+
+  // A diferencia de buildBuckets, esta version NUNCA aplica el split
+  // Nuevo/EnCurso: cada categoria va directo a su bucket plano, ordenada por
+  // fecha, tal cual la pidio el usuario ("una abajo de la otra").
+  function buildLapsoBuckets(mailsInRange) {
+    var buckets = {};
+    LAPSO_CATEGORY_KEYS.forEach(function (k) { buckets[k] = []; });
+
+    var sorted = mailsInRange.slice().sort(function (a, b) { return b.sentAtMs - a.sentAtMs; });
+
+    sorted.forEach(function (m) {
+      (m.categories || []).forEach(function (cat) {
+        if (cat in buckets) {
+          buckets[cat].push({ subject: m.subject, resolved: m.resolved === true });
+        }
+      });
+    });
+
+    return buckets;
+  }
 
   // La solapa "Resumen" siempre muestra una ventana viva de las ultimas 6
   // horas: no hay selector, se recalcula sola en cada refresh automatico.
@@ -518,7 +553,7 @@
     rangeLineLapsoEl.textContent = "Rango " + fmt(fromMs) + " → " + fmt(toMs) + "  ·  cargando…";
     var fetched;
     try {
-      fetched = await fetchMails(fromMs, toMs);
+      fetched = await fetchMails(fromMs, toMs, { categoriesAny: LAPSO_CATEGORY_KEYS });
     } catch (e) {
       rangeLineLapsoEl.textContent = "Error cargando datos: " + e.message;
       return;
@@ -527,15 +562,15 @@
     var dark = isDark();
     rangeLineLapsoEl.textContent = "Rango " + fmt(fromMs) + " → " + fmt(toMs) +
       "  ·  " + fetched.length + (fetched.length === 1 ? " mail" : " mails") + lastRunSuffix();
-    var buckets = buildBuckets(fetched);
-    renderCards(buckets, dark, cardsLapsoEl, CATEGORY_META);
+    var buckets = buildLapsoBuckets(fetched);
+    renderCards(buckets, dark, cardsLapsoEl, LAPSO_META);
   }
 
   function rerenderLapso() {
     if (currentLapsoRange) {
       var dark = isDark();
-      var buckets = buildBuckets(currentLapsoRange.mails);
-      renderCards(buckets, dark, cardsLapsoEl, CATEGORY_META);
+      var buckets = buildLapsoBuckets(currentLapsoRange.mails);
+      renderCards(buckets, dark, cardsLapsoEl, LAPSO_META);
     } else {
       rangeLineLapsoEl.textContent = "Elegí un rango de fechas y horas arriba y tocá \"Generar resumen\".";
       cardsLapsoEl.innerHTML = "";
