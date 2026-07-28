@@ -999,11 +999,15 @@ def run_incremental(sb, gmail_user, gmail_pass, now_ms):
 
 
 def run_provision_users(sb, mapping_text):
-    # Alta de usuarios para el login. mapping_text: un "usuario:codigo" por
-    # linea (se pega como input del workflow al momento de correrlo, nunca
-    # se commitea a git). Cada codigo se enmascara del log de GitHub Actions
-    # apenas se lee, asi nunca queda expuesto ni siquiera en la corrida.
-    lines = [ln.strip() for ln in mapping_text.splitlines() if ln.strip()]
+    # Alta de usuarios para el login. mapping_text: pares "usuario:codigo"
+    # separados por coma, punto y coma y/o salto de linea (se admite
+    # cualquier combinacion, porque el campo de workflow_dispatch en la web
+    # de GitHub es de una sola linea y pegar texto con saltos de linea ahi
+    # puede romperse). Se pega como input del workflow al momento de
+    # correrlo, nunca se commitea a git. Cada codigo se enmascara del log de
+    # GitHub Actions apenas se lee, asi nunca queda expuesto ni siquiera en
+    # la corrida.
+    lines = [ln.strip() for ln in re.split(r"[,;\n]+", mapping_text) if ln.strip()]
     ok, failed = 0, 0
     for line in lines:
         if ":" not in line:
