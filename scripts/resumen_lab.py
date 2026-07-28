@@ -535,9 +535,25 @@ def classify(msg, body):
         if quoted_ms:
             first_seen_candidate = min(first_seen_candidate, quoted_ms)
 
-    # 1. Tareas (WBS)
+    # 1. Tareas (WBS): categoria EXCLUYENTE. Un mail con codigo WBS en el
+    # asunto/cuerpo es una tarea de proyecto, no una escalacion real, aunque
+    # lo hayan mandado por Reportes Tecnica hacia SOC/VOC/NOC/IT (pasa
+    # seguido). Por eso se corta aca y no sigue evaluando el resto de reglas.
     if WBS_RE.search(subject) or WBS_RE.search(body):
-        categories.append("tareas")
+        return {
+            "categories": ["tareas"],
+            "subject": subject,
+            "sender_name": sender_name,
+            "sender_address": sender_addr,
+            "to_recipients": to_text,
+            "cc_recipients": cc_text,
+            "sent_at_ms": own_ms,
+            "first_seen_ms": first_seen_candidate,
+            "is_first_of_chain": is_first_of_chain(msg),
+            "closure_detected": False,
+            "needs_thrid": "tareas" in CATEGORIES_NEEDING_THRID,
+            "body_text": body,
+        }
 
     # 2. Afectaciones masivas
     if sender_addr == AFECTACION_MASIVA_SENDER:
