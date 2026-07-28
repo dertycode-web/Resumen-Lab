@@ -322,23 +322,41 @@
   ];
 
   // Solapa aparte "Resumen por lapso": listado plano (sin split Nuevo/EnCurso)
-  // por rango de fechas elegido a mano. Usa 6 categorias propias, con reglas
+  // por rango de fechas elegido a mano. Usa categorias propias, con reglas
   // de clasificacion DISTINTAS de las que arman las otras solapas aunque
   // "operacionTecnica"/"operacionMSK"/"operacionLY" compartan nombre con las
   // de Resumen (ahi si se parten en Nuevo/EnCurso; aca van planas).
-  var LAPSO_META = [
+  //
+  // Escalamientos IT y Escalamientos ING van cada uno en UNA sola tarjeta,
+  // con sub-titulos adentro (GIM/HDB/HelpDesk y VOC/SOC/NOC respectivamente)
+  // en vez de una tarjeta por sub-categoria.
+  var LAPSO_GROUPS = [
     { key: "afectacionMasivaLapso", label: "Afectaciones masivas", icon: "🚨", rgb: "216,71,47" },
-    { key: "escalamientosIT_GIM", label: "Escalamientos IT · GIM", icon: "🆘", rgb: "44,123,229" },
-    { key: "escalamientosIT_HDB", label: "Escalamientos IT · HDB", icon: "🆘", rgb: "44,123,229" },
-    { key: "escalamientosIT_HelpDesk", label: "Escalamientos IT · HelpDesk", icon: "🆘", rgb: "44,123,229" },
-    { key: "escalamientosING_VOC", label: "Escalamientos ING · VOC", icon: "🛠️", rgb: "76,139,43" },
-    { key: "escalamientosING_SOC", label: "Escalamientos ING · SOC", icon: "🛠️", rgb: "76,139,43" },
-    { key: "escalamientosING_NOC", label: "Escalamientos ING · NOC", icon: "🛠️", rgb: "76,139,43" },
+    {
+      label: "Escalamientos IT", icon: "🆘", rgb: "44,123,229",
+      subs: [
+        { key: "escalamientosIT_GIM", label: "GIM" },
+        { key: "escalamientosIT_HDB", label: "HDB" },
+        { key: "escalamientosIT_HelpDesk", label: "HelpDesk" }
+      ]
+    },
+    {
+      label: "Escalamientos ING", icon: "🛠️", rgb: "76,139,43",
+      subs: [
+        { key: "escalamientosING_VOC", label: "VOC" },
+        { key: "escalamientosING_SOC", label: "SOC" },
+        { key: "escalamientosING_NOC", label: "NOC" }
+      ]
+    },
     { key: "operacionTecnica", label: "Operación Técnica", icon: "📡", rgb: "6,148,162" },
     { key: "operacionMSK", label: "Operación MSK", icon: "🧭", rgb: "138,92,214" },
     { key: "operacionLY", label: "Operación Loyalty", icon: "🎯", rgb: "199,120,17" }
   ];
-  var LAPSO_CATEGORY_KEYS = LAPSO_META.map(function (m) { return m.key; });
+  var LAPSO_CATEGORY_KEYS = [];
+  LAPSO_GROUPS.forEach(function (g) {
+    if (g.subs) { g.subs.forEach(function (s) { LAPSO_CATEGORY_KEYS.push(s.key); }); }
+    else { LAPSO_CATEGORY_KEYS.push(g.key); }
+  });
 
   // A diferencia de buildBuckets, esta version NUNCA aplica el split
   // Nuevo/EnCurso: cada categoria va directo a su bucket plano, ordenada por
@@ -465,6 +483,73 @@
     return buckets;
   }
 
+  // Fila individual de un mail dentro de una tarjeta: asunto + boton de
+  // copiar + (si hay fecha de inicio) detalle "Comenzó: ..." desplegable al
+  // hacer click. Se reusa tanto en tarjetas simples como en las agrupadas
+  // (Resumen por lapso con sub-titulos GIM/HDB/HelpDesk, VOC/SOC/NOC).
+  function buildRowEl(item) {
+    var row = document.createElement("div");
+    row.className = "rl-row";
+    var resolved = item.resolved === true;
+    var hasOrigin = typeof item.originMs === "number";
+    row.style.cssText = "font-size:14.5px;line-height:1.5;padding:8px 6px;border-radius:8px;color:" + (resolved ? "var(--text-muted)" : "var(--text-primary)") + ";" + (resolved ? "text-decoration:line-through;text-decoration-color:var(--text-muted);" : "") + (hasOrigin ? "cursor:pointer;" : "");
+    var age = typeof item.ageHours === "number" ? "<span style='color:var(--text-muted);font-weight:500;'> · " + fmtDuration(item.ageHours) + (hasOrigin ? " ▾" : "") + "</span>" : "";
+    var check = resolved ? "<span style='text-decoration:none;color:#1f9d63;font-weight:700;'>✓ </span>" : "";
+
+    var mainLine = document.createElement("div");
+    mainLine.style.cssText = "display:flex;align-items:flex-start;gap:6px;justify-content:space-between;";
+
+    var textSpan = document.createElement("span");
+    textSpan.style.cssText = "flex:1;min-width:0;";
+    textSpan.innerHTML = check + "- " + (item.subject || "(sin asunto)") + age;
+    mainLine.appendChild(textSpan);
+
+    var copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.title = "Copiar nombre de la cadena";
+    copyBtn.textContent = "📋";
+    copyBtn.style.cssText = "flex-shrink:0;border:none;background:transparent;cursor:pointer;font-size:13px;padding:2px 4px;border-radius:6px;opacity:0.6;line-height:1;";
+    copyBtn.addEventListener("mouseenter", function () { copyBtn.style.opacity = "1"; });
+    copyBtn.addEventListener("mouseleave", function () { copyBtn.style.opacity = "0.6"; });
+    copyBtn.addEventListener("click", function (ev) {
+      ev.stopPropagation();
+      var textToCopy = item.subject || "";
+      var doneFeedback = function () {
+        var prev = copyBtn.textContent;
+        copyBtn.textContent = "✅";
+        setTimeout(function () { copyBtn.textContent = prev; }, 1200);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(textToCopy).then(doneFeedback).catch(doneFeedback);
+      } else {
+        var ta = document.createElement("textarea");
+        ta.value = textToCopy;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand("copy"); } catch (e) {}
+        document.body.removeChild(ta);
+        doneFeedback();
+      }
+    });
+    mainLine.appendChild(copyBtn);
+
+    row.appendChild(mainLine);
+
+    if (hasOrigin) {
+      var detail = document.createElement("div");
+      detail.style.cssText = "display:none;font-size:13px;color:var(--text-muted);margin-top:4px;padding-left:2px;";
+      detail.textContent = "Comenzó: " + fmt(item.originMs);
+      row.appendChild(detail);
+      row.addEventListener("click", function () {
+        detail.style.display = detail.style.display === "none" ? "block" : "none";
+      });
+    }
+
+    return row;
+  }
+
   function renderCards(buckets, dark, targetEl, metaList) {
     targetEl.innerHTML = "";
     metaList.forEach(function (meta) {
@@ -509,66 +594,84 @@
         var list = document.createElement("div");
         list.style.cssText = "max-height:" + (big ? "340px" : "220px") + ";overflow-y:auto;border-top:1px solid var(--divider);margin-top:2px;padding-top:9px;";
         items.forEach(function (item) {
-          var row = document.createElement("div");
-          row.className = "rl-row";
-          var resolved = item.resolved === true;
-          var hasOrigin = typeof item.originMs === "number";
-          row.style.cssText = "font-size:14.5px;line-height:1.5;padding:8px 6px;border-radius:8px;color:" + (resolved ? "var(--text-muted)" : "var(--text-primary)") + ";" + (resolved ? "text-decoration:line-through;text-decoration-color:var(--text-muted);" : "") + (hasOrigin ? "cursor:pointer;" : "");
-          var age = typeof item.ageHours === "number" ? "<span style='color:var(--text-muted);font-weight:500;'> · " + fmtDuration(item.ageHours) + (hasOrigin ? " ▾" : "") + "</span>" : "";
-          var check = resolved ? "<span style='text-decoration:none;color:#1f9d63;font-weight:700;'>✓ </span>" : "";
+          list.appendChild(buildRowEl(item));
+        });
+        card.appendChild(list);
+      } else {
+        var empty = document.createElement("div");
+        empty.style.cssText = "font-size:14px;color:var(--text-muted);font-style:italic;";
+        empty.textContent = "Sin novedades";
+        card.appendChild(empty);
+      }
 
-          var mainLine = document.createElement("div");
-          mainLine.style.cssText = "display:flex;align-items:flex-start;gap:6px;justify-content:space-between;";
+      targetEl.appendChild(card);
+    });
+  }
 
-          var textSpan = document.createElement("span");
-          textSpan.style.cssText = "flex:1;min-width:0;";
-          textSpan.innerHTML = check + "- " + (item.subject || "(sin asunto)") + age;
-          mainLine.appendChild(textSpan);
+  // Como renderCards, pero para grupos que pueden tener sub-titulos adentro
+  // de la misma tarjeta (Escalamientos IT: GIM/HDB/HelpDesk; Escalamientos
+  // ING: VOC/SOC/NOC), en vez de una tarjeta separada por sub-categoria.
+  function renderLapsoCards(buckets, dark, targetEl) {
+    targetEl.innerHTML = "";
+    LAPSO_GROUPS.forEach(function (group) {
+      var accentColor = dark ? "rgba(" + group.rgb + ",0.95)" : "rgb(" + group.rgb + ")";
+      var softBg = dark ? "rgba(" + group.rgb + ",0.22)" : "rgba(" + group.rgb + ",0.12)";
 
-          var copyBtn = document.createElement("button");
-          copyBtn.type = "button";
-          copyBtn.title = "Copiar nombre de la cadena";
-          copyBtn.textContent = "📋";
-          copyBtn.style.cssText = "flex-shrink:0;border:none;background:transparent;cursor:pointer;font-size:13px;padding:2px 4px;border-radius:6px;opacity:0.6;line-height:1;";
-          copyBtn.addEventListener("mouseenter", function () { copyBtn.style.opacity = "1"; });
-          copyBtn.addEventListener("mouseleave", function () { copyBtn.style.opacity = "0.6"; });
-          copyBtn.addEventListener("click", function (ev) {
-            ev.stopPropagation();
-            var textToCopy = item.subject || "";
-            var doneFeedback = function () {
-              var prev = copyBtn.textContent;
-              copyBtn.textContent = "✅";
-              setTimeout(function () { copyBtn.textContent = prev; }, 1200);
-            };
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-              navigator.clipboard.writeText(textToCopy).then(doneFeedback).catch(doneFeedback);
-            } else {
-              var ta = document.createElement("textarea");
-              ta.value = textToCopy;
-              ta.style.position = "fixed";
-              ta.style.opacity = "0";
-              document.body.appendChild(ta);
-              ta.select();
-              try { document.execCommand("copy"); } catch (e) {}
-              document.body.removeChild(ta);
-              doneFeedback();
-            }
-          });
-          mainLine.appendChild(copyBtn);
+      var subGroups = group.subs || [{ key: group.key, label: null }];
+      var totalItems = 0;
+      subGroups.forEach(function (sg) { totalItems += ((buckets && buckets[sg.key]) || []).length; });
+      var hasItems = totalItems > 0;
 
-          row.appendChild(mainLine);
+      var card = document.createElement("div");
+      card.className = "rl-card";
+      card.style.cssText = "border:1px solid var(--card-border);border-radius:16px;padding:18px 20px 19px;background:var(--card-bg);box-shadow:var(--shadow-soft);display:flex;flex-direction:column;";
 
-          if (hasOrigin) {
-            var detail = document.createElement("div");
-            detail.style.cssText = "display:none;font-size:13px;color:var(--text-muted);margin-top:4px;padding-left:2px;";
-            detail.textContent = "Comenzó: " + fmt(item.originMs);
-            row.appendChild(detail);
-            row.addEventListener("click", function () {
-              detail.style.display = detail.style.display === "none" ? "block" : "none";
+      var head = document.createElement("div");
+      head.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:10px;" + (hasItems ? "margin-bottom:12px;" : "");
+
+      var titleWrap = document.createElement("div");
+      titleWrap.style.cssText = "display:flex;align-items:center;gap:10px;min-width:0;";
+
+      var iconEl = document.createElement("span");
+      iconEl.style.cssText = "width:30px;height:30px;border-radius:8px;background:" + softBg + ";display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;";
+      iconEl.textContent = group.icon;
+
+      var titleEl = document.createElement("span");
+      titleEl.style.cssText = "font-size:15.5px;font-weight:700;color:var(--text-title);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
+      titleEl.textContent = group.label;
+
+      titleWrap.appendChild(iconEl);
+      titleWrap.appendChild(titleEl);
+
+      var badge = document.createElement("span");
+      badge.style.cssText = "font-size:13px;font-weight:700;color:" + (hasItems ? "#fff" : accentColor) + ";background:" + (hasItems ? accentColor : softBg) + ";border-radius:999px;padding:3px 11px;flex-shrink:0;";
+      badge.textContent = totalItems;
+
+      head.appendChild(titleWrap);
+      head.appendChild(badge);
+      card.appendChild(head);
+
+      if (hasItems) {
+        var list = document.createElement("div");
+        list.style.cssText = "max-height:280px;overflow-y:auto;border-top:1px solid var(--divider);margin-top:2px;padding-top:9px;";
+        subGroups.forEach(function (sg) {
+          var items = (buckets && buckets[sg.key]) || [];
+          if (sg.label) {
+            var subHead = document.createElement("div");
+            subHead.style.cssText = "font-size:12.5px;font-weight:700;letter-spacing:0.03em;text-transform:uppercase;color:" + accentColor + ";margin:10px 6px 4px;";
+            subHead.textContent = sg.label + " (" + items.length + ")";
+            list.appendChild(subHead);
+          }
+          if (items.length === 0) {
+            var emptySub = document.createElement("div");
+            emptySub.style.cssText = "font-size:13.5px;color:var(--text-muted);font-style:italic;padding:2px 6px 4px;";
+            emptySub.textContent = "Sin novedades";
+            list.appendChild(emptySub);
+          } else {
+            items.forEach(function (item) {
+              list.appendChild(buildRowEl(item));
             });
           }
-
-          list.appendChild(row);
         });
         card.appendChild(list);
       } else {
@@ -619,14 +722,14 @@
     rangeLineLapsoEl.textContent = "Rango " + fmt(fromMs) + " → " + fmt(toMs) +
       "  ·  " + fetched.length + (fetched.length === 1 ? " mail" : " mails") + lastRunSuffix();
     var buckets = buildLapsoBuckets(fetched);
-    renderCards(buckets, dark, cardsLapsoEl, LAPSO_META);
+    renderLapsoCards(buckets, dark, cardsLapsoEl);
   }
 
   function rerenderLapso() {
     if (currentLapsoRange) {
       var dark = isDark();
       var buckets = buildLapsoBuckets(currentLapsoRange.mails);
-      renderCards(buckets, dark, cardsLapsoEl, LAPSO_META);
+      renderLapsoCards(buckets, dark, cardsLapsoEl);
     } else {
       rangeLineLapsoEl.textContent = "Elegí un rango de fechas y horas arriba y tocá \"Generar resumen\".";
       cardsLapsoEl.innerHTML = "";
