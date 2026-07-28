@@ -181,9 +181,23 @@
   var SUPABASE_ANON_KEY = config.anonKey;
   var lastRunInfo = null; // se carga async desde la tabla "meta"
 
+  // Quita prefijos de respuesta/reenvio (RE:, FW:, FWD:, RV:, etc.) del
+  // inicio del asunto, incluso repetidos ("RE: RE: FW: Orion") y con o sin
+  // acentos/mayusculas, para mostrar el nombre de la cadena limpio.
+  var SUBJECT_PREFIX_RE = /^\s*(re|fw|fwd|rv|rr)\s*:\s*/i;
+  function cleanSubject(subject) {
+    var s = subject || "";
+    var prev;
+    do {
+      prev = s;
+      s = s.replace(SUBJECT_PREFIX_RE, "");
+    } while (s !== prev);
+    return s;
+  }
+
   function normalizeRow(row) {
     return {
-      subject: row.subject,
+      subject: cleanSubject(row.subject),
       categories: row.categories || [],
       sentAtMs: row.sent_at ? Date.parse(row.sent_at) : null,
       firstSeenMs: row.first_seen_at ? Date.parse(row.first_seen_at) : null,
@@ -235,7 +249,7 @@
       var m = r.mails || {};
       return {
         category: r.category,
-        subject: m.subject,
+        subject: cleanSubject(m.subject),
         sentAtMs: m.sent_at ? Date.parse(m.sent_at) : null,
         firstSeenMs: m.first_seen_at ? Date.parse(m.first_seen_at) : null,
         resolved: m.closure_detected === true
