@@ -257,6 +257,34 @@
     return (username || "").trim().toLowerCase() + "@" + AUTH_EMAIL_DOMAIN;
   }
 
+  // Emoji personal al lado del nombre, solo cosmetico (elegido por cada
+  // persona / el usuario admin).
+  var USERNAME_EMOJI = {
+    "Alejandro_Bonnet": "🇸🇪",
+    "Ignacio_Suarez": "🥸",
+    "Lautaro_Rojas": "👽",
+    "Eric_Chamorro": "🕺",
+    "Abigail_Giaquinta": "🌹",
+    "Monica_Robiano": "👵",
+    "Matias_Yance": "👑",
+    "Javier_Ortega": "🤓",
+    "Joaquin_Bulnes": "🖤",
+    "Levi_Baumann": "🔫",
+    "Melanie_Aguirre": "👩‍⚕️",
+    "Rocio_Lujan": "🍺",
+    "Sol_Martinez": "☀️",
+    "Agustin_Bustamante": "🐶",
+    "Nayla_Balmaceda": "⛰️",
+    "Martin_Figueroa": "☕",
+    "Debora_Castillo": "💀",
+    "Luciana_Gonzalez": "👩‍🌾"
+  };
+  function displayNameFor(username) {
+    var base = username ? username.replace(/_/g, " ") : "";
+    var emoji = USERNAME_EMOJI[username];
+    return emoji ? emoji + " " + base : base;
+  }
+
   function authHeaders() {
     return {
       apikey: SUPABASE_ANON_KEY,
@@ -288,7 +316,7 @@
     authRootEl.style.display = "none";
     appRootEl.style.display = "block";
     logoutBtnEl.style.display = "inline-flex";
-    sessionUserLabelEl.textContent = username ? username.replace(/_/g, " ") : "";
+    sessionUserLabelEl.textContent = displayNameFor(username);
     if (!appBootstrapped) {
       appBootstrapped = true;
       bootstrap();
