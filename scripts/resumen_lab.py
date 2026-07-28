@@ -605,7 +605,17 @@ def classify(msg, body):
         categories.append("afectacionMasivaLapso")
     if sender_addr in IT_AREA_ADDR_HINTS:
         categories.append("escalamientosITLapso")
-    if sender_addr == REMEDY_AMX_SENDER and REPORTES_TECNICA_HINT in recipients_text:
+    # Escalamientos ING del lapso: combina dos flujos que en la practica son
+    # el mismo tipo de escalamiento a Ingenieria pero en direcciones opuestas
+    # (pedido del usuario, para que coincida con lo que ya se ve en la
+    # solapa Resumen normal, categoria "ingenieria"):
+    #  a) Remedy AMX (sistema externo de tickets) -> Reportes Tecnicas
+    #  b) Reportes Tecnica -> SOC/VOC/NOC (igual criterio que "ingenieria")
+    _es_remedy_a_reportes = sender_addr == REMEDY_AMX_SENDER and REPORTES_TECNICA_HINT in recipients_text
+    _es_reportes_a_ing = REPORTES_TECNICA_HINT in sender_addr and any(
+        re.search(r"\b" + re.escape(k) + r"\b", recipients_text) for k in ING_RECIPIENT_KEYWORDS
+    )
+    if _es_remedy_a_reportes or _es_reportes_a_ing:
         categories.append("escalamientosINGLapso")
 
     if not categories:
