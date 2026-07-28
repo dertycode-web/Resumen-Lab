@@ -92,6 +92,11 @@ CLOSURE_PATTERNS = [
 ]
 CLOSURE_RE = re.compile("|".join(CLOSURE_PATTERNS), re.IGNORECASE)
 WBS_RE = re.compile(r"\bWBS\b", re.IGNORECASE)
+# Otros patrones de "tareas" que no usan codigo WBS pero son el mismo tipo de
+# item (tareas de proyecto), segun indico el usuario: obras de modernizacion
+# GPON en Salta (traen codigo "GSLT-R####") y avisos de AVIFO (habilitacion/
+# carga de corte).
+TAREAS_EXTRA_RE = re.compile(r"gslt-r\d+|\bavifo\b", re.IGNORECASE)
 
 MAX_BODY_CHARS = 20000  # tope defensivo, por si algun mail viene con un cuerpo gigante
 
@@ -539,7 +544,7 @@ def classify(msg, body):
     # asunto/cuerpo es una tarea de proyecto, no una escalacion real, aunque
     # lo hayan mandado por Reportes Tecnica hacia SOC/VOC/NOC/IT (pasa
     # seguido). Por eso se corta aca y no sigue evaluando el resto de reglas.
-    if WBS_RE.search(subject) or WBS_RE.search(body):
+    if WBS_RE.search(subject) or WBS_RE.search(body) or TAREAS_EXTRA_RE.search(subject) or TAREAS_EXTRA_RE.search(body):
         return {
             "categories": ["tareas"],
             "subject": subject,
