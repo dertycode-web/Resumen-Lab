@@ -89,7 +89,66 @@
 </head>
 <body style="margin:0;padding:36px 24px 48px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Arial,sans-serif;background:linear-gradient(180deg,var(--bg-top) 0%,var(--bg-bottom) 220px);color:var(--text-primary);font-size:16px;">
 
-<div style="max-width:1040px;margin:0 auto;">
+<div id="authRoot" style="max-width:420px;margin:70px auto;display:none;">
+  <div style="text-align:center;margin-bottom:26px;">
+    <div style="width:52px;height:52px;border-radius:14px;background:linear-gradient(135deg,#6a5cf5,#8f7ffb);display:flex;align-items:center;justify-content:center;font-size:24px;margin:0 auto 14px;box-shadow:0 3px 10px rgba(106,92,245,0.28);">🧪</div>
+    <h1 style="font-size:22px;font-weight:600;margin:0;color:var(--text-title);">Resumen LAB</h1>
+  </div>
+
+  <div style="border:1px solid var(--panel-border);border-radius:16px;padding:26px 26px 22px;background:var(--panel-bg);box-shadow:var(--shadow-soft);">
+
+    <div id="authLoginBlock">
+      <div style="font-size:15.5px;font-weight:700;margin-bottom:16px;color:var(--text-title);">Iniciar sesión</div>
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--label-color);font-weight:500;margin-bottom:12px;">
+        Usuario
+        <input type="text" id="loginUser" autocomplete="username" style="height:42px;border:1px solid var(--input-border);border-radius:8px;padding:0 12px;font-size:14.5px;color:var(--input-text);background:var(--input-bg);">
+      </label>
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--label-color);font-weight:500;margin-bottom:6px;">
+        Contraseña
+        <input type="password" id="loginPass" autocomplete="current-password" style="height:42px;border:1px solid var(--input-border);border-radius:8px;padding:0 12px;font-size:14.5px;color:var(--input-text);background:var(--input-bg);">
+      </label>
+      <div style="text-align:right;margin-bottom:14px;">
+        <a href="#" id="goFirstLogin" style="font-size:13px;color:var(--accent);text-decoration:none;">¿Primera vez? Iniciar con código temporal</a>
+      </div>
+      <button id="loginBtn" type="button" style="width:100%;height:42px;border:none;border-radius:8px;background:var(--accent);color:#fff;font-size:14.5px;font-weight:600;cursor:pointer;">Ingresar</button>
+    </div>
+
+    <div id="authFirstLoginBlock" style="display:none;">
+      <div style="font-size:15.5px;font-weight:700;margin-bottom:6px;color:var(--text-title);">Primer inicio de sesión</div>
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:16px;">Usá el código temporal de un solo uso que te pasaron para entrar por primera vez.</div>
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--label-color);font-weight:500;margin-bottom:12px;">
+        Usuario
+        <input type="text" id="flUser" autocomplete="username" style="height:42px;border:1px solid var(--input-border);border-radius:8px;padding:0 12px;font-size:14.5px;color:var(--input-text);background:var(--input-bg);">
+      </label>
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--label-color);font-weight:500;margin-bottom:12px;">
+        Código temporal
+        <input type="text" id="flCode" autocomplete="off" style="height:42px;border:1px solid var(--input-border);border-radius:8px;padding:0 12px;font-size:14.5px;color:var(--input-text);background:var(--input-bg);">
+      </label>
+      <div style="text-align:right;margin-bottom:14px;">
+        <a href="#" id="goLogin" style="font-size:13px;color:var(--accent);text-decoration:none;">Ya tengo mi contraseña</a>
+      </div>
+      <button id="firstLoginBtn" type="button" style="width:100%;height:42px;border:none;border-radius:8px;background:var(--accent);color:#fff;font-size:14.5px;font-weight:600;cursor:pointer;">Continuar</button>
+    </div>
+
+    <div id="authSetPasswordBlock" style="display:none;">
+      <div style="font-size:15.5px;font-weight:700;margin-bottom:6px;color:var(--text-title);">Creá tu contraseña</div>
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:16px;">Es la última vez que vas a necesitar el código temporal — a partir de ahora entrás con esta contraseña.</div>
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--label-color);font-weight:500;margin-bottom:12px;">
+        Nueva contraseña
+        <input type="password" id="newPass1" autocomplete="new-password" style="height:42px;border:1px solid var(--input-border);border-radius:8px;padding:0 12px;font-size:14.5px;color:var(--input-text);background:var(--input-bg);">
+      </label>
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--label-color);font-weight:500;margin-bottom:14px;">
+        Confirmar contraseña
+        <input type="password" id="newPass2" autocomplete="new-password" style="height:42px;border:1px solid var(--input-border);border-radius:8px;padding:0 12px;font-size:14.5px;color:var(--input-text);background:var(--input-bg);">
+      </label>
+      <button id="setPasswordBtn" type="button" style="width:100%;height:42px;border:none;border-radius:8px;background:var(--accent);color:#fff;font-size:14.5px;font-weight:600;cursor:pointer;">Guardar y entrar</button>
+    </div>
+
+    <div id="authMsg" style="font-size:13.5px;color:#a83b2a;margin-top:14px;min-height:18px;"></div>
+  </div>
+</div>
+
+<div id="appRoot" style="max-width:1040px;margin:0 auto;display:none;">
 
   <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:24px;">
     <div style="display:flex;align-items:center;gap:16px;">
@@ -103,6 +162,8 @@
       </div>
     </div>
     <div id="rangeControls" style="display:flex;align-items:center;gap:10px;">
+      <span id="sessionUserLabel" style="font-size:13.5px;color:var(--text-muted);margin-right:2px;"></span>
+      <button id="logoutBtn" title="Cerrar sesión" style="display:none;height:46px;border-radius:11px;border:1px solid var(--toggle-border);background:var(--toggle-bg);cursor:pointer;font-size:13.5px;font-weight:600;padding:0 14px;color:var(--text-secondary);box-shadow:var(--shadow-soft);flex-shrink:0;">Cerrar sesión</button>
       <button id="themeToggle" title="Cambiar tema" style="width:46px;height:46px;border-radius:11px;border:1px solid var(--toggle-border);background:var(--toggle-bg);cursor:pointer;font-size:19px;display:flex;align-items:center;justify-content:center;box-shadow:var(--shadow-soft);flex-shrink:0;">🌙</button>
     </div>
   </div>
@@ -146,6 +207,8 @@
 }
 </script>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+
 <script>
 (function () {
   // ---- Theme handling ----
@@ -180,6 +243,174 @@
   var SUPABASE_URL = config.url;
   var SUPABASE_ANON_KEY = config.anonKey;
   var lastRunInfo = null; // se carga async desde la tabla "meta"
+
+  // ---- Login / autenticacion ----
+  // Los "usuarios" no son casillas de mail reales: Supabase Auth exige un
+  // email como identificador, asi que cada nombre de usuario se mapea a
+  // "<usuario>@resumenlab.local" puertas adentro. La persona solo ve/escribe
+  // su nombre de usuario, nunca ese email sintetico.
+  var AUTH_EMAIL_DOMAIN = "resumenlab.local";
+  var sbAuth = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  var currentAccessToken = null;
+
+  function usernameToEmail(username) {
+    return (username || "").trim().toLowerCase() + "@" + AUTH_EMAIL_DOMAIN;
+  }
+
+  function authHeaders() {
+    return {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: "Bearer " + (currentAccessToken || SUPABASE_ANON_KEY)
+    };
+  }
+
+  var authRootEl = document.getElementById("authRoot");
+  var appRootEl = document.getElementById("appRoot");
+  var authMsgEl = document.getElementById("authMsg");
+  var authLoginBlockEl = document.getElementById("authLoginBlock");
+  var authFirstLoginBlockEl = document.getElementById("authFirstLoginBlock");
+  var authSetPasswordBlockEl = document.getElementById("authSetPasswordBlock");
+  var sessionUserLabelEl = document.getElementById("sessionUserLabel");
+  var logoutBtnEl = document.getElementById("logoutBtn");
+
+  function showAuthScreen(which) {
+    authLoginBlockEl.style.display = which === "login" ? "block" : "none";
+    authFirstLoginBlockEl.style.display = which === "firstlogin" ? "block" : "none";
+    authSetPasswordBlockEl.style.display = which === "setpassword" ? "block" : "none";
+    authMsgEl.textContent = "";
+  }
+
+  function showAuthMsg(msg) {
+    authMsgEl.textContent = msg;
+  }
+
+  function showApp(username) {
+    authRootEl.style.display = "none";
+    appRootEl.style.display = "block";
+    logoutBtnEl.style.display = "inline-flex";
+    sessionUserLabelEl.textContent = username ? username : "";
+    if (!appBootstrapped) {
+      appBootstrapped = true;
+      bootstrap();
+    }
+  }
+
+  function showLoginGate() {
+    appRootEl.style.display = "none";
+    logoutBtnEl.style.display = "none";
+    sessionUserLabelEl.textContent = "";
+    authRootEl.style.display = "block";
+    showAuthScreen("login");
+  }
+
+  // Despues de un signIn exitoso (con password real O con codigo temporal,
+  // da igual): revisa si a esa cuenta le falta crear su contraseña real. Asi
+  // no importa por cual de los dos formularios haya entrado, el resultado es
+  // el mismo — cierra el hueco de "loguearse con el codigo temporal para
+  // siempre sin nunca crear una contraseña propia".
+  function afterSignIn(session) {
+    currentAccessToken = session.access_token;
+    var uid = session.user.id;
+    var username = (session.user.user_metadata && session.user.user_metadata.username) || "";
+    fetch(SUPABASE_URL + "/rest/v1/profiles?id=eq." + encodeURIComponent(uid) + "&select=must_change_password,username", {
+      headers: authHeaders()
+    }).then(function (r) { return r.json(); }).then(function (rows) {
+      var profile = rows && rows[0];
+      pendingUsername = (profile && profile.username) || username;
+      if (profile && profile.must_change_password === true) {
+        showAuthScreen("setpassword");
+      } else {
+        showApp(pendingUsername);
+      }
+    }).catch(function () {
+      // Si no se pudo leer el perfil, mejor pecar de cauto y pedir igual
+      // que confirme/cree contraseña antes de dejarlo entrar.
+      pendingUsername = username;
+      showAuthScreen("setpassword");
+    });
+  }
+
+  var pendingUsername = "";
+  var appBootstrapped = false;
+
+  document.getElementById("loginBtn").addEventListener("click", function () {
+    var username = document.getElementById("loginUser").value;
+    var password = document.getElementById("loginPass").value;
+    if (!username || !password) { showAuthMsg("Completá usuario y contraseña."); return; }
+    showAuthMsg("Ingresando…");
+    sbAuth.auth.signInWithPassword({ email: usernameToEmail(username), password: password }).then(function (res) {
+      if (res.error || !res.data.session) {
+        showAuthMsg("Usuario o contraseña incorrectos.");
+        return;
+      }
+      afterSignIn(res.data.session);
+    });
+  });
+
+  document.getElementById("firstLoginBtn").addEventListener("click", function () {
+    var username = document.getElementById("flUser").value;
+    var code = document.getElementById("flCode").value;
+    if (!username || !code) { showAuthMsg("Completá usuario y código temporal."); return; }
+    showAuthMsg("Verificando…");
+    sbAuth.auth.signInWithPassword({ email: usernameToEmail(username), password: code }).then(function (res) {
+      if (res.error || !res.data.session) {
+        showAuthMsg("Usuario o código temporal incorrectos.");
+        return;
+      }
+      afterSignIn(res.data.session);
+    });
+  });
+
+  document.getElementById("goFirstLogin").addEventListener("click", function (ev) {
+    ev.preventDefault();
+    showAuthScreen("firstlogin");
+  });
+  document.getElementById("goLogin").addEventListener("click", function (ev) {
+    ev.preventDefault();
+    showAuthScreen("login");
+  });
+
+  document.getElementById("setPasswordBtn").addEventListener("click", function () {
+    var p1 = document.getElementById("newPass1").value;
+    var p2 = document.getElementById("newPass2").value;
+    if (!p1 || !p2) { showAuthMsg("Completá los dos campos de contraseña."); return; }
+    if (p1.length < 8) { showAuthMsg("La contraseña tiene que tener al menos 8 caracteres."); return; }
+    if (p1 !== p2) { showAuthMsg("Las contraseñas no coinciden."); return; }
+    showAuthMsg("Guardando…");
+    sbAuth.auth.updateUser({ password: p1 }).then(function (res) {
+      if (res.error) {
+        showAuthMsg("No se pudo guardar la contraseña: " + res.error.message);
+        return;
+      }
+      return fetch(SUPABASE_URL + "/rest/v1/rpc/complete_first_login", {
+        method: "POST",
+        headers: Object.assign({ "Content-Type": "application/json" }, authHeaders())
+      });
+    }).then(function () {
+      document.getElementById("newPass1").value = "";
+      document.getElementById("newPass2").value = "";
+      showApp(pendingUsername);
+    });
+  });
+
+  logoutBtnEl.addEventListener("click", function () {
+    sbAuth.auth.signOut().then(function () {
+      currentAccessToken = null;
+      showLoginGate();
+    });
+  });
+
+  // Al cargar la pagina, si ya habia una sesion guardada (supabase-js
+  // persiste la sesion sola en localStorage), entra directo sin pedir login
+  // de nuevo.
+  sbAuth.auth.getSession().then(function (res) {
+    var session = res.data && res.data.session;
+    if (session) {
+      afterSignIn(session);
+    } else {
+      showLoginGate();
+    }
+  });
 
   // Quita prefijos de respuesta/reenvio (RE:, FW:, FWD:, RV:, etc.) del
   // inicio del asunto, incluso repetidos ("RE: RE: FW: Orion") y con o sin
@@ -222,7 +453,7 @@
     }
     var url = SUPABASE_URL + "/rest/v1/mails?" + params.join("&");
     var resp = await fetch(url, {
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + SUPABASE_ANON_KEY }
+      headers: authHeaders()
     });
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     var rows = await resp.json();
@@ -241,7 +472,7 @@
     ];
     var url = SUPABASE_URL + "/rest/v1/mail_activity?" + params.join("&");
     var resp = await fetch(url, {
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + SUPABASE_ANON_KEY }
+      headers: authHeaders()
     });
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     var rows = await resp.json();
@@ -261,7 +492,7 @@
     try {
       var url = SUPABASE_URL + "/rest/v1/meta?key=eq.last_run&select=value";
       var resp = await fetch(url, {
-        headers: { apikey: SUPABASE_ANON_KEY, Authorization: "Bearer " + SUPABASE_ANON_KEY }
+        headers: authHeaders()
       });
       if (!resp.ok) return null;
       var rows = await resp.json();
@@ -875,8 +1106,6 @@
       fetchLastRun().then(function (value) { lastRunInfo = value; });
     }, RESUMEN_REFRESH_MS);
   }
-
-  bootstrap();
 
   themeToggle.addEventListener("click", function () {
     currentTheme = currentTheme === "dark" ? "light" : "dark";

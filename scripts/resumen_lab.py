@@ -33,6 +33,12 @@ from email.header import decode_header
 
 IMAP_HOST = "imap.gmail.com"
 
+# Dominio sintetico para los "usuarios" del login (no son casillas reales).
+# Supabase Auth exige un email como identificador; el usuario que ve la
+# persona en la pantalla de login sigue siendo su nombre (ej. Lautaro_Rojas),
+# y se lo mapea a "lautaro_rojas@resumenlab.local" puertas adentro.
+AUTH_EMAIL_DOMAIN = "resumenlab.local"
+
 AFECTACION_MASIVA_SENDER = "argentinaafectacionmasiva@claro.com.ar"
 REPORTES_TECNICA_HINT = "reportestecnica"  # matches reportestecnica@ and reportestecnicas@
 MARIA_INES_HINT = "maria ines emiliani"
@@ -684,7 +690,7 @@ class SupabaseClient:
         self.url = url.rstrip("/")
         self.key = service_role_key
 
-    def _request(self, method, path, body=None):
+    def _request(self, method, path, body=None, prefer=None):
         url = f"{self.url}{path}"
         data = json.dumps(body).encode("utf-8") if body is not None else None
         req = urllib.request.Request(url, data=data, method=method)
@@ -693,6 +699,8 @@ class SupabaseClient:
         req.add_header("Content-Type", "application/json")
         if method == "GET":
             req.add_header("Accept", "application/json")
+        if prefer:
+            req.add_header("Prefer", prefer)
         with urllib.request.urlopen(req, timeout=25) as resp:
             raw = resp.read()
             if not raw:
@@ -732,6 +740,33 @@ class SupabaseClient:
         if result:
             return result[0]["value"]
         return None
+
+    def create_auth_user(self, email, password, username):
+        # Alta de usuario en Supabase Auth via API de administracion (requiere
+        # la service_role key). email_confirm=true: no se manda ningun mail de
+        # confirmacion (el email es sintetico, no una casilla real).
+        payload = {
+            "email": email,
+            "password": password,
+            "email_confirm": True,
+            "user_metadata": {"username": username},
+        }
+        result = self._request("POST", "/auth/v1/admin/users", payload)
+        return result["id"]
+
+    def upsert_profile(self, user_id, username):
+        payload = {
+            "id": user_id,
+            "username": username,
+            "must_change_password": True,
+        }
+        # on_conflict + resolution=merge-duplicates: si se corre el
+        # aprovisionamiento dos veces para el mismo usuario, actualiza en vez
+        # de fallar por PK duplicada.
+        self._request(
+            "POST", "/rest/v1/profiles?on_conflict=id", payload,
+            prefer="resolution=merge-duplicates",
+        )
 
     def max_sent_at_ms(self):
         result = self._request("GET", "/rest/v1/mails?select=sent_at&order=sent_at.desc&limit=1")
@@ -963,11 +998,56 @@ def run_incremental(sb, gmail_user, gmail_pass, now_ms):
         log(f"Con errores: {error_msg}")
 
 
+def run_provision_users(sb, mapping_text):
+    # Alta de usuarios para el login. mapping_text: un "usuario:codigo" por
+    # linea (se pega como input del workflow al momento de correrlo, nunca
+    # se commitea a git). Cada codigo se enmascara del log de GitHub Actions
+    # apenas se lee, asi nunca queda expuesto ni siquiera en la corrida.
+    lines = [ln.strip() for ln in mapping_text.splitlines() if ln.strip()]
+    ok, failed = 0, 0
+    for line in lines:
+        if ":" not in line:
+            log(f"[provision] linea invalida (esperaba usuario:codigo): {line!r}")
+            failed += 1
+            continue
+        username, code = line.split(":", 1)
+        username = username.strip()
+        code = code.strip()
+        if not username or not code:
+            failed += 1
+            continue
+        # Enmascara el codigo ANTES de cualquier otra cosa: si algo de esto
+        # se llegara a imprimir mas adelante por error, GitHub lo reemplaza
+        # por *** en el log.
+        print(f"::add-mask::{code}")
+        email_addr = f"{username.lower()}@{AUTH_EMAIL_DOMAIN}"
+        try:
+            user_id = sb.create_auth_user(email_addr, code, username)
+            sb.upsert_profile(user_id, username)
+            log(f"[provision] {username}: OK")
+            ok += 1
+        except Exception as e:
+            log(f"[provision] {username}: ERROR {type(e).__name__}: {e}")
+            failed += 1
+    log(f"[provision] Listo. OK: {ok}, con error: {failed}.")
+
+
 def main():
-    gmail_user = os.environ.get("GMAIL_USER")
-    gmail_pass = os.environ.get("GMAIL_APP_PASSWORD")
     supabase_url = os.environ.get("SUPABASE_URL")
     supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    now_ms = int(time.time() * 1000)
+
+    provision_users_raw = os.environ.get("PROVISION_USERS") or ""
+    if provision_users_raw.strip():
+        if not supabase_url or not supabase_key:
+            log("ERROR: faltan SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY para aprovisionar usuarios")
+            sys.exit(0)
+        sb = SupabaseClient(supabase_url, supabase_key)
+        run_provision_users(sb, provision_users_raw)
+        return
+
+    gmail_user = os.environ.get("GMAIL_USER")
+    gmail_pass = os.environ.get("GMAIL_APP_PASSWORD")
     now_ms = int(time.time() * 1000)
 
     missing = [

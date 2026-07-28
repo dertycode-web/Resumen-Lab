@@ -15,6 +15,15 @@ on:
           para completar historial que el checkpoint ya dejo atras.
         required: false
         default: ""
+      provision_users:
+        description: >-
+          SOLO para dar de alta usuarios de login. Dejar vacio en corridas
+          normales. Si se completa, la corrida NO revisa mails: da de alta
+          cada usuario en Supabase Auth. Formato: un "usuario:codigo" por
+          linea, ej. Lautaro_Rojas:ABCD1234 (pegar tal cual, nunca queda
+          guardado en el repo — solo vive en esta corrida puntual).
+        required: false
+        default: ""
 
 concurrency:
   group: resumen-lab-update
@@ -41,4 +50,5 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           BACKFILL_HOURS: ${{ github.event.inputs.backfill_hours }}
+          PROVISION_USERS: ${{ github.event.inputs.provision_users }}
         run: python scripts/resumen_lab.py
