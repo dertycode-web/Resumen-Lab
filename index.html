@@ -160,6 +160,7 @@
         <div id="rangeLineEscIT" style="display:none;font-size:15px;color:var(--text-secondary);margin-top:4px;"></div>
         <div id="rangeLineTareas" style="display:none;font-size:15px;color:var(--text-secondary);margin-top:4px;"></div>
         <div id="rangeLineLapso" style="display:none;font-size:15px;color:var(--text-secondary);margin-top:4px;"></div>
+        <div id="rangeLinePendientes" style="display:none;font-size:15px;color:var(--text-secondary);margin-top:4px;"></div>
       </div>
     </div>
     <div id="rangeControls" style="display:flex;align-items:center;gap:10px;">
@@ -179,6 +180,7 @@
     <button class="rl-tab" data-tab="escalamientosIT" style="border:none;background:none;padding:10px 6px;margin-right:14px;font-size:15.5px;font-weight:600;cursor:pointer;color:var(--text-secondary);border-bottom:3px solid transparent;">Escalamientos IT</button>
     <button class="rl-tab" data-tab="tareas" style="border:none;background:none;padding:10px 6px;margin-right:14px;font-size:15.5px;font-weight:600;cursor:pointer;color:var(--text-secondary);border-bottom:3px solid transparent;">Tareas</button>
     <button class="rl-tab" data-tab="lapso" style="border:none;background:none;padding:10px 6px;margin-right:14px;font-size:15.5px;font-weight:600;cursor:pointer;color:var(--text-secondary);border-bottom:3px solid transparent;">Resumen por lapso</button>
+    <button class="rl-tab" data-tab="pendientes" style="border:none;background:none;padding:10px 6px;margin-right:14px;font-size:15.5px;font-weight:600;cursor:pointer;color:var(--text-secondary);border-bottom:3px solid transparent;">Pendientes</button>
   </div>
 
   <div id="rangePanel" style="display:none;border:1px solid var(--panel-border);border-radius:16px;padding:18px 22px;margin-bottom:26px;background:var(--panel-bg);box-shadow:var(--shadow-soft);">
@@ -202,6 +204,7 @@
   <div id="statusBanners"></div>
 
   <div id="cards" style="display:grid;grid-template-columns:1fr 1fr;gap:18px;"></div>
+  <div id="cardsPendientes" style="display:none;grid-template-columns:1fr;gap:18px;"></div>
   <div id="cardsEscIT" style="display:none;grid-template-columns:1fr;gap:18px;"></div>
   <div id="cardsTareas" style="display:none;grid-template-columns:1fr;gap:18px;"></div>
   <div id="cardsLapso" style="display:none;grid-template-columns:1fr;gap:18px;"></div>
@@ -346,7 +349,10 @@
     authMsgEl.textContent = msg;
   }
 
+  var currentUsername = "";
+
   function showApp(username) {
+    currentUsername = username;
     authRootEl.style.display = "none";
     appRootEl.style.display = "block";
     userMenuBtnEl.style.display = "flex";
@@ -581,6 +587,7 @@
 
   function normalizeRow(row) {
     return {
+      id: row.id,
       subject: cleanSubject(row.subject),
       categories: row.categories || [],
       sentAtMs: row.sent_at ? Date.parse(row.sent_at) : null,
@@ -592,7 +599,7 @@
   async function fetchMails(fromMs, toMs, opts) {
     opts = opts || {};
     var params = [
-      "select=subject,categories,sent_at,first_seen_at,closure_detected",
+      "select=id,subject,categories,sent_at,first_seen_at,closure_detected",
       "sent_at=gte." + encodeURIComponent(new Date(fromMs).toISOString()),
       "sent_at=lte." + encodeURIComponent(new Date(toMs).toISOString()),
       "order=sent_at.desc",
@@ -754,7 +761,14 @@
     sorted.forEach(function (m) {
       (m.categories || []).forEach(function (cat) {
         if (cat in buckets) {
-          buckets[cat].push({ subject: m.subject, resolved: m.resolved === true, originMs: (typeof m.firstSeenMs === "number") ? m.firstSeenMs : m.sentAtMs });
+          buckets[cat].push({
+            id: m.id,
+            subject: m.subject,
+            resolved: m.resolved === true,
+            originMs: (typeof m.firstSeenMs === "number") ? m.firstSeenMs : m.sentAtMs,
+            category: cat,
+            showPendiente: true
+          });
         }
       });
     });
@@ -775,6 +789,8 @@
   var rangeLineEscITEl = document.getElementById("rangeLineEscIT");
   var rangeLineTareasEl = document.getElementById("rangeLineTareas");
   var rangeLineLapsoEl = document.getElementById("rangeLineLapso");
+  var rangeLinePendientesEl = document.getElementById("rangeLinePendientes");
+  var cardsPendientesEl = document.getElementById("cardsPendientes");
   var rangePanelEl = document.getElementById("rangePanel");
   var tabButtons = document.querySelectorAll(".rl-tab");
   var currentTab = "resumen";
@@ -790,22 +806,26 @@
     var isEscIT = currentTab === "escalamientosIT";
     var isTareas = currentTab === "tareas";
     var isLapso = currentTab === "lapso";
+    var isPendientes = currentTab === "pendientes";
 
     cardsEl.style.display = isResumen ? "grid" : "none";
     cardsEscITEl.style.display = isEscIT ? "grid" : "none";
     cardsTareasEl.style.display = isTareas ? "grid" : "none";
     cardsLapsoEl.style.display = isLapso ? "grid" : "none";
+    cardsPendientesEl.style.display = isPendientes ? "grid" : "none";
 
     rangeLine.style.display = isResumen ? "block" : "none";
     rangeLineEscITEl.style.display = isEscIT ? "block" : "none";
     rangeLineTareasEl.style.display = isTareas ? "block" : "none";
     rangeLineLapsoEl.style.display = isLapso ? "block" : "none";
+    rangeLinePendientesEl.style.display = isPendientes ? "block" : "none";
 
     rangePanelEl.style.display = isLapso ? "block" : "none";
 
     if (isEscIT) renderEscalamientosIT();
     if (isTareas) refreshTareasWindow();
     if (isLapso) rerenderLapso();
+    if (isPendientes) refreshPendientes();
   }
 
   tabButtons.forEach(function (btn) {
@@ -867,6 +887,34 @@
     return buckets;
   }
 
+  // Marca una cadena (identificada por su thread_id / id de mails) como
+  // pendiente: upsert en la tabla "pendientes" con quien la marco. Lo puede
+  // hacer cualquier usuario logueado, y lo ve cualquier otro en la pestaña
+  // "Pendientes" (no es privado por usuario).
+  function markPendiente(item, btn) {
+    if (!item.id) return;
+    btn.disabled = true;
+    btn.textContent = "⏳";
+    fetch(SUPABASE_URL + "/rest/v1/pendientes?on_conflict=thread_id", {
+      method: "POST",
+      headers: Object.assign({ "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates" }, authHeaders()),
+      body: JSON.stringify({
+        thread_id: item.id,
+        subject: item.subject,
+        category: item.category || null,
+        marked_by: currentUsername
+      })
+    }).then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      btn.textContent = "📌";
+      btn.title = "Ya marcada como pendiente";
+    }).catch(function () {
+      btn.disabled = false;
+      btn.textContent = "📌";
+      btn.title = "Marcar como pendiente";
+    });
+  }
+
   // Fila individual de un mail dentro de una tarjeta: asunto + boton de
   // copiar + (si hay fecha de inicio) detalle "Comenzó: ..." desplegable al
   // hacer click. Se reusa tanto en tarjetas simples como en las agrupadas
@@ -918,6 +966,21 @@
       }
     });
     mainLine.appendChild(copyBtn);
+
+    if (item.showPendiente && item.id) {
+      var pendBtn = document.createElement("button");
+      pendBtn.type = "button";
+      pendBtn.title = "Marcar como pendiente";
+      pendBtn.textContent = "📌";
+      pendBtn.style.cssText = "flex-shrink:0;border:none;background:transparent;cursor:pointer;font-size:13px;padding:2px 4px;border-radius:6px;opacity:0.6;line-height:1;";
+      pendBtn.addEventListener("mouseenter", function () { pendBtn.style.opacity = "1"; });
+      pendBtn.addEventListener("mouseleave", function () { pendBtn.style.opacity = "0.6"; });
+      pendBtn.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        markPendiente(item, pendBtn);
+      });
+      mainLine.appendChild(pendBtn);
+    }
 
     row.appendChild(mainLine);
 
@@ -1118,6 +1181,90 @@
       rangeLineLapsoEl.textContent = "Elegí un rango de fechas y horas arriba y tocá \"Generar resumen\".";
       cardsLapsoEl.innerHTML = "";
     }
+  }
+
+  // ---- Pendientes: cadenas marcadas a mano desde "Resumen por lapso".
+  // Cualquier usuario ve la lista completa (no es privado), y cualquiera
+  // puede marcarla como finalizada (desaparece para todos). ----
+  async function fetchPendientes() {
+    var url = SUPABASE_URL + "/rest/v1/pendientes?select=thread_id,subject,category,marked_by,marked_at&order=marked_at.desc";
+    var resp = await fetch(url, { headers: authHeaders() });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    return await resp.json();
+  }
+
+  function finalizarPendiente(threadId, rowEl) {
+    fetch(SUPABASE_URL + "/rest/v1/pendientes?thread_id=eq." + encodeURIComponent(threadId), {
+      method: "DELETE",
+      headers: authHeaders()
+    }).then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      rowEl.remove();
+      if (!cardsPendientesEl.querySelector(".rl-row")) renderPendientesList([]);
+    }).catch(function () {
+      rangeLinePendientesEl.textContent = "No se pudo marcar como finalizada, probá de nuevo.";
+    });
+  }
+
+  function renderPendientesList(rows) {
+    cardsPendientesEl.innerHTML = "";
+    var card = document.createElement("div");
+    card.className = "rl-card";
+    card.style.cssText = "border:1px solid var(--card-border);border-radius:16px;padding:18px 20px 19px;background:var(--card-bg);box-shadow:var(--shadow-soft);";
+
+    if (!rows.length) {
+      var empty = document.createElement("div");
+      empty.style.cssText = "font-size:14px;color:var(--text-muted);font-style:italic;";
+      empty.textContent = "No hay cadenas pendientes.";
+      card.appendChild(empty);
+      cardsPendientesEl.appendChild(card);
+      return;
+    }
+
+    rows.forEach(function (p) {
+      var row = document.createElement("div");
+      row.className = "rl-row";
+      row.style.cssText = "font-size:14.5px;line-height:1.5;padding:10px 6px;border-bottom:1px solid var(--divider);display:flex;align-items:flex-start;justify-content:space-between;gap:10px;";
+
+      var textWrap = document.createElement("div");
+      textWrap.style.cssText = "flex:1;min-width:0;";
+      var subjectLine = document.createElement("div");
+      subjectLine.style.cssText = "color:var(--text-primary);";
+      subjectLine.textContent = "- " + (p.subject || "(sin asunto)");
+      var metaLine = document.createElement("div");
+      metaLine.style.cssText = "font-size:12.5px;color:var(--text-muted);margin-top:2px;";
+      metaLine.textContent = "Marcado por " + displayNameFor(p.marked_by) + "  ·  " + fmt(Date.parse(p.marked_at));
+      textWrap.appendChild(subjectLine);
+      textWrap.appendChild(metaLine);
+      row.appendChild(textWrap);
+
+      var doneBtn = document.createElement("button");
+      doneBtn.type = "button";
+      doneBtn.textContent = "✅ Marcar finalizada";
+      doneBtn.style.cssText = "flex-shrink:0;border:1px solid var(--toggle-border);background:var(--toggle-bg);color:var(--text-secondary);cursor:pointer;font-size:12.5px;font-weight:600;padding:6px 10px;border-radius:8px;";
+      doneBtn.addEventListener("click", function () {
+        doneBtn.disabled = true;
+        finalizarPendiente(p.thread_id, row);
+      });
+      row.appendChild(doneBtn);
+
+      card.appendChild(row);
+    });
+
+    cardsPendientesEl.appendChild(card);
+  }
+
+  async function refreshPendientes() {
+    rangeLinePendientesEl.textContent = "Cargando…";
+    var rows;
+    try {
+      rows = await fetchPendientes();
+    } catch (e) {
+      rangeLinePendientesEl.textContent = "Error cargando datos: " + e.message;
+      return;
+    }
+    rangeLinePendientesEl.textContent = rows.length + (rows.length === 1 ? " cadena pendiente" : " cadenas pendientes");
+    renderPendientesList(rows);
   }
 
   var ARG_OFFSET_MS = 3 * 3600 * 1000; // Argentina es UTC-3 fijo
