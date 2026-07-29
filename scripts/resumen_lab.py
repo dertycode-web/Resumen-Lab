@@ -114,6 +114,14 @@ WBS_RE = re.compile(r"\bWBS\b", re.IGNORECASE)
 # GPON en Salta (traen codigo "GSLT-R####") y avisos de AVIFO (habilitacion/
 # carga de corte).
 TAREAS_EXTRA_RE = re.compile(r"gslt-r\d+|\bavifo\b", re.IGNORECASE)
+# Detecta un reenvio MANUAL (Outlook "Reenviar", no un redirect automatico):
+# el asunto queda con prefijo Fwd/FW/RV/RR y el mail no tiene In-Reply-To ni
+# References (no es una respuesta dentro de un hilo que Gmail ya conoce).
+# Sirve para, en estos casos puntuales, usar la fecha ORIGINAL citada en el
+# cuerpo ("Enviado: ...") en vez de la fecha del reenvio (que es "ahora"),
+# para que un mail recuperado a mano por un hueco de caida no aparezca como
+# "nuevo" hoy sino en la fecha/hora en la que realmente se envio.
+MANUAL_FORWARD_SUBJECT_RE = re.compile(r"^\s*(fw|fwd|rv|rr)\s*:", re.IGNORECASE)
 
 MAX_BODY_CHARS = 20000  # tope defensivo, por si algun mail viene con un cuerpo gigante
 
@@ -422,6 +430,15 @@ def classify(msg, body):
     recipients_text = (to_text + " " + cc_text).lower()
     subject_lower = subject.lower()
     own_ms = epoch_ms_from_date_header(msg)
+
+    # Si es un reenvio manual (ver MANUAL_FORWARD_SUBJECT_RE), usar la fecha
+    # original citada en el cuerpo como fecha real del mail, no la fecha del
+    # reenvio en si. Asi, mails recuperados a mano para tapar un hueco de
+    # caida se guardan en su fecha real y no aparecen como "nuevos" hoy.
+    if MANUAL_FORWARD_SUBJECT_RE.match(subject) and is_first_of_chain(msg):
+        original_ms = earliest_quoted_date_ms(body)
+        if original_ms:
+            own_ms = original_ms
 
     categories = []
     closure_detected = False
