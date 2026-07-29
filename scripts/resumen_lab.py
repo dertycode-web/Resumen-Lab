@@ -435,7 +435,12 @@ def classify(msg, body):
     # original citada en el cuerpo como fecha real del mail, no la fecha del
     # reenvio en si. Asi, mails recuperados a mano para tapar un hueco de
     # caida se guardan en su fecha real y no aparecen como "nuevos" hoy.
-    if MANUAL_FORWARD_SUBJECT_RE.match(subject) and is_first_of_chain(msg):
+    # Nota: no se exige is_first_of_chain aca porque algunas versiones de
+    # Outlook/OWA igual agregan un header "References" al reenviar (para
+    # mantener la conversacion agrupada), aunque sea un reenvio nuevo y no
+    # una respuesta real. El prefijo del asunto (Fwd/FW/RV/RR) ya es una
+    # señal suficientemente especifica de que es un reenvio manual.
+    if MANUAL_FORWARD_SUBJECT_RE.match(subject):
         original_ms = earliest_quoted_date_ms(body)
         if original_ms:
             own_ms = original_ms
