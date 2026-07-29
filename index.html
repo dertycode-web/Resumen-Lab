@@ -73,12 +73,13 @@
   }
   * { box-sizing: border-box; }
   body { -webkit-font-smoothing: antialiased; }
-  body, .rl-card, #rangePreset, #customFrom, #customTo, #customBtn, #themeToggle {
+  body, .rl-card, #rangePreset, #customFrom, #customTo, #customBtn, #userMenuBtn {
     transition: background-color .18s ease, border-color .18s ease, color .18s ease, box-shadow .18s ease;
   }
-  #rangePreset:focus, #customFrom:focus, #customTo:focus, #customBtn:focus, #themeToggle:focus { outline: 2px solid var(--accent-border); outline-offset: 1px; }
+  #rangePreset:focus, #customFrom:focus, #customTo:focus, #customBtn:focus, #userMenuBtn:focus { outline: 2px solid var(--accent-border); outline-offset: 1px; }
   #customBtn:hover { background: var(--accent-bg) !important; border-color: var(--accent) !important; }
-  #themeToggle:hover { border-color: var(--accent) !important; }
+  #userMenuBtn:hover { border-color: var(--accent) !important; }
+  #themeMenuItem:hover, #logoutBtn:hover { background: var(--row-hover); }
   .rl-card:hover { box-shadow: var(--shadow-card-hover); }
   .rl-row:hover { background: var(--row-hover); }
   ::-webkit-scrollbar { width: 6px; }
@@ -162,9 +163,14 @@
       </div>
     </div>
     <div id="rangeControls" style="display:flex;align-items:center;gap:10px;">
-      <span id="sessionUserLabel" style="font-size:13.5px;color:var(--text-muted);margin-right:2px;"></span>
-      <button id="logoutBtn" title="Cerrar sesión" style="display:none;align-items:center;justify-content:center;height:46px;border-radius:11px;border:1px solid var(--toggle-border);background:var(--toggle-bg);cursor:pointer;font-size:13.5px;font-weight:600;padding:0 16px;color:var(--text-secondary);box-shadow:var(--shadow-soft);flex-shrink:0;white-space:nowrap;line-height:1;">Cerrar sesión</button>
-      <button id="themeToggle" title="Cambiar tema" style="width:46px;height:46px;border-radius:11px;border:1px solid var(--toggle-border);background:var(--toggle-bg);cursor:pointer;font-size:19px;display:flex;align-items:center;justify-content:center;box-shadow:var(--shadow-soft);flex-shrink:0;">🌙</button>
+      <div id="userMenu" style="position:relative;flex-shrink:0;">
+        <button id="userMenuBtn" title="Cuenta" style="display:none;width:46px;height:46px;border-radius:11px;border:1px solid var(--toggle-border);background:var(--toggle-bg);cursor:pointer;font-size:20px;align-items:center;justify-content:center;box-shadow:var(--shadow-soft);"></button>
+        <div id="userMenuDropdown" style="display:none;position:absolute;right:0;top:54px;min-width:200px;border:1px solid var(--panel-border);border-radius:12px;background:var(--panel-bg);box-shadow:var(--shadow-soft);padding:8px;z-index:50;">
+          <div id="userMenuName" style="font-size:13.5px;font-weight:600;color:var(--text-title);padding:8px 10px;border-bottom:1px solid var(--panel-border);margin-bottom:4px;"></div>
+          <button id="themeMenuItem" type="button" style="width:100%;text-align:left;border:none;background:none;padding:9px 10px;border-radius:8px;font-size:13.5px;color:var(--text-secondary);cursor:pointer;display:flex;align-items:center;gap:8px;">🌙 Modo oscuro</button>
+          <button id="logoutBtn" title="Cerrar sesión" type="button" style="width:100%;text-align:left;border:none;background:none;padding:9px 10px;border-radius:8px;font-size:13.5px;color:var(--text-secondary);cursor:pointer;display:flex;align-items:center;gap:8px;">🚪 Cerrar sesión</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -226,15 +232,15 @@
   // ---- Theme handling ----
   var THEME_KEY = "resumenLabTheme";
   var root = document.documentElement;
-  var themeToggle = document.getElementById("themeToggle");
+  var themeMenuItem = document.getElementById("themeMenuItem");
 
   function applyTheme(theme) {
     if (theme === "dark") {
       root.setAttribute("data-theme", "dark");
-      themeToggle.textContent = "☀️";
+      themeMenuItem.textContent = "☀️ Modo claro";
     } else {
       root.removeAttribute("data-theme");
-      themeToggle.textContent = "🌙";
+      themeMenuItem.textContent = "🌙 Modo oscuro";
     }
   }
 
@@ -310,8 +316,24 @@
   var authLoginBlockEl = document.getElementById("authLoginBlock");
   var authFirstLoginBlockEl = document.getElementById("authFirstLoginBlock");
   var authSetPasswordBlockEl = document.getElementById("authSetPasswordBlock");
-  var sessionUserLabelEl = document.getElementById("sessionUserLabel");
+  var userMenuEl = document.getElementById("userMenu");
+  var userMenuBtnEl = document.getElementById("userMenuBtn");
+  var userMenuDropdownEl = document.getElementById("userMenuDropdown");
+  var userMenuNameEl = document.getElementById("userMenuName");
   var logoutBtnEl = document.getElementById("logoutBtn");
+
+  function closeUserMenu() {
+    userMenuDropdownEl.style.display = "none";
+  }
+
+  userMenuBtnEl.addEventListener("click", function (e) {
+    e.stopPropagation();
+    userMenuDropdownEl.style.display = userMenuDropdownEl.style.display === "block" ? "none" : "block";
+  });
+
+  document.addEventListener("click", function (e) {
+    if (!userMenuEl.contains(e.target)) closeUserMenu();
+  });
 
   function showAuthScreen(which) {
     authLoginBlockEl.style.display = which === "login" ? "block" : "none";
@@ -327,8 +349,9 @@
   function showApp(username) {
     authRootEl.style.display = "none";
     appRootEl.style.display = "block";
-    logoutBtnEl.style.display = "inline-flex";
-    sessionUserLabelEl.textContent = displayNameFor(username);
+    userMenuBtnEl.style.display = "flex";
+    userMenuBtnEl.textContent = USERNAME_EMOJI[username] || "👤";
+    userMenuNameEl.textContent = displayNameFor(username);
     if (!appBootstrapped) {
       appBootstrapped = true;
       bootstrap();
@@ -425,8 +448,9 @@
 
   function showLoginGate() {
     appRootEl.style.display = "none";
-    logoutBtnEl.style.display = "none";
-    sessionUserLabelEl.textContent = "";
+    userMenuBtnEl.style.display = "none";
+    userMenuNameEl.textContent = "";
+    closeUserMenu();
     bocaWidgetEl.style.display = "none";
     authRootEl.style.display = "block";
     showAuthScreen("login");
@@ -1267,11 +1291,12 @@
     }, RESUMEN_REFRESH_MS);
   }
 
-  themeToggle.addEventListener("click", function () {
+  themeMenuItem.addEventListener("click", function () {
     currentTheme = currentTheme === "dark" ? "light" : "dark";
     applyTheme(currentTheme);
     try { localStorage.setItem(THEME_KEY, currentTheme); } catch (e) {}
     rerenderCurrent();
+    closeUserMenu();
   });
 
   var customBtn = document.getElementById("customBtn");
