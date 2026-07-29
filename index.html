@@ -193,6 +193,8 @@
     <div id="customMsg" style="font-size:13px;color:var(--text-muted);margin-top:9px;"></div>
   </div>
 
+  <div id="statusBanners"></div>
+
   <div id="cards" style="display:grid;grid-template-columns:1fr 1fr;gap:18px;"></div>
   <div id="cardsEscIT" style="display:none;grid-template-columns:1fr;gap:18px;"></div>
   <div id="cardsTareas" style="display:none;grid-template-columns:1fr;gap:18px;"></div>
@@ -1204,12 +1206,39 @@
     if (currentTab === "lapso") rerenderLapso();
   }
 
+  var statusBannersEl = document.getElementById("statusBanners");
+
   function showErrorBanner(msg) {
     var dark0 = isDark();
+    var existing = document.getElementById("lastRunErrorBanner");
+    if (existing) existing.remove();
     var errBox = document.createElement("div");
+    errBox.id = "lastRunErrorBanner";
     errBox.style.cssText = "border:1px solid " + (dark0 ? "#5c3630" : "#f3c9c2") + ";background:" + (dark0 ? "#2c1c1a" : "#fdf1ef") + ";border-radius:14px;padding:15px 17px;font-size:14.5px;color:" + (dark0 ? "#f0a598" : "#a83b2a") + ";display:flex;gap:10px;align-items:flex-start;margin-bottom:16px;";
     errBox.innerHTML = "<span>⚠️</span><span>La última corrida tuvo un error: " + msg + "</span>";
-    cardsEl.parentNode.insertBefore(errBox, cardsEl);
+    statusBannersEl.appendChild(errBox);
+  }
+
+  // Alerta grande y dificil de ignorar cuando hace mucho tiempo que no hay
+  // una lectura exitosa de la bandeja (no solo cuando hay un error puntual,
+  // tambien cubre el caso de que las corridas automaticas se hayan dejado
+  // de disparar del todo, sin ningun error explicito que mostrar).
+  var STALE_THRESHOLD_HOURS = 3;
+
+  function updateStalenessBanner() {
+    var existing = document.getElementById("staleRunBanner");
+    if (existing) existing.remove();
+    if (!lastRunInfo || !lastRunInfo.timestamp) return;
+    var hoursSince = (Date.now() - lastRunInfo.timestamp) / 3600000;
+    if (hoursSince < STALE_THRESHOLD_HOURS) return;
+    var dark0 = isDark();
+    var box = document.createElement("div");
+    box.id = "staleRunBanner";
+    box.style.cssText = "border:2px solid " + (dark0 ? "#8a4a1f" : "#e0a856") + ";background:" + (dark0 ? "#3a2712" : "#fff4e2") + ";border-radius:14px;padding:16px 18px;font-size:15px;font-weight:600;color:" + (dark0 ? "#ffcf8a" : "#8a5416") + ";display:flex;gap:11px;align-items:flex-start;margin-bottom:16px;";
+    box.innerHTML = "<span style='font-size:19px;'>🛑</span><span>Hace " + fmtDuration(hoursSince) +
+      " que no se actualiza la bandeja de mails (última lectura: " + fmt(lastRunInfo.timestamp) +
+      "). Revisá si la Action de GitHub o la cuenta de Gmail tienen algún problema — el resto de la página sigue mostrando datos, pero no va a recibir mails nuevos hasta que se resuelva.</span>";
+    statusBannersEl.insertBefore(box, statusBannersEl.firstChild);
   }
 
   async function bootstrap() {
@@ -1219,6 +1248,7 @@
     fetchLastRun().then(function (value) {
       lastRunInfo = value;
       if (lastRunInfo && lastRunInfo.error) showErrorBanner(lastRunInfo.error);
+      updateStalenessBanner();
       rerenderCurrent();
     });
 
@@ -1230,7 +1260,10 @@
       refreshResumenWindow();
       if (currentTab === "escalamientosIT") renderEscalamientosIT();
       if (currentTab === "tareas") refreshTareasWindow();
-      fetchLastRun().then(function (value) { lastRunInfo = value; });
+      fetchLastRun().then(function (value) {
+        lastRunInfo = value;
+        updateStalenessBanner();
+      });
     }, RESUMEN_REFRESH_MS);
   }
 

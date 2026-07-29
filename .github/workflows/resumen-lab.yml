@@ -9,10 +9,11 @@ on:
     inputs:
       backfill_hours:
         description: >-
-          Dejar vacio para la corrida normal (incremental por UID). Poner un
-          numero (ej. 24) para hacer un barrido unico de las ultimas N horas
-          por fecha, SIN tocar el checkpoint de las corridas en vivo — sirve
-          para completar historial que el checkpoint ya dejo atras.
+          Dejar vacio para la corrida normal (incremental por historyId).
+          Poner un numero (ej. 24) para hacer un barrido unico de las
+          ultimas N horas por fecha, SIN tocar el checkpoint de las corridas
+          en vivo — sirve para completar historial que el checkpoint ya
+          dejo atras.
         required: false
         default: ""
       provision_users:
@@ -52,8 +53,9 @@ jobs:
 
       - name: Correr script de Resumen LAB
         env:
-          GMAIL_USER: ${{ secrets.GMAIL_USER }}
-          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_OAUTH_CLIENT_ID: ${{ secrets.GMAIL_OAUTH_CLIENT_ID }}
+          GMAIL_OAUTH_CLIENT_SECRET: ${{ secrets.GMAIL_OAUTH_CLIENT_SECRET }}
+          GMAIL_OAUTH_REFRESH_TOKEN: ${{ secrets.GMAIL_OAUTH_REFRESH_TOKEN }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           BACKFILL_HOURS: ${{ github.event.inputs.backfill_hours }}

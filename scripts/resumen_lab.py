@@ -1,38 +1,48 @@
 #!/usr/bin/env python3
 """
-Resumen LAB - lee la casilla de Gmail por IMAP, categoriza los mails nuevos
-y los guarda en una tabla de Supabase (Postgres), via su API REST/RPC.
+Resumen LAB - lee la casilla de Gmail via Gmail API (OAuth), categoriza los
+mails nuevos y los guarda en una tabla de Supabase (Postgres), via su API
+REST/RPC.
 
 Corre desde GitHub Actions, usando estas variables de entorno (secrets):
-  GMAIL_USER, GMAIL_APP_PASSWORD, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+  GMAIL_OAUTH_CLIENT_ID, GMAIL_OAUTH_CLIENT_SECRET, GMAIL_OAUTH_REFRESH_TOKEN,
+  SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+
+Historial: originalmente esto se conectaba por IMAP con una contrasena de
+aplicacion (GMAIL_USER/GMAIL_APP_PASSWORD). Google trata ese mecanismo como
+"acceso de apps menos seguras" y termino inhabilitando la cuenta por el
+patron de acceso automatizado. Se migro a Gmail API con OAuth (metodo
+oficial de Google para automatizacion, scope de solo lectura
+"gmail.readonly"), que ademas simplifica mucho la lectura de mails: Gmail
+API nunca baja el contenido de adjuntos/imagenes salvo que se pida
+explicitamente por su attachmentId (cosa que este script nunca hace), asi
+que el problema de gastar cuota de banda ancha en imagenes que se
+descartaban tampoco existe mas.
 
 No depende de la computadora del usuario ni de que Cowork este abierto, y
 ya no escribe nada en index.html: la pagina lee los datos directo de
 Supabase (con la clave publica "anon"), asi que un despliegue de la pagina
 solo hace falta cuando cambia el CODIGO, no cada vez que llegan mails.
-
-IMPORTANTE sobre rendimiento: todo el fetch de IMAP se hace en LOTES (varios
-UIDs en una sola consulta), no uno por uno. Un round-trip IMAP individual
-puede tardar varios segundos; con 100+ mails candidatos, hacerlo uno por uno
-tardaba mas de 20 minutos. Agrupando en tandas de ~100-150 UIDs por consulta,
-el mismo trabajo se hace en unas pocas consultas en total.
 """
 
+import base64
 import email
 import email.utils
 import html
-import imaplib
 import json
 import os
 import re
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from email.header import decode_header
+from email.message import Message
 
-IMAP_HOST = "imap.gmail.com"
+GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
+GMAIL_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 # Dominio sintetico para los "usuarios" del login (no son casillas reales).
 # Supabase Auth exige un email como identificador; el usuario que ve la
@@ -231,299 +241,175 @@ def is_it_escalation_recipient(recipients_text):
 
 
 # ---------------------------------------------------------------------------
-# Fetch de IMAP EN LOTES (varios UIDs por consulta, no uno por uno)
+# Gmail API (OAuth) — reemplaza el viejo fetch por IMAP en lotes. Con
+# format=full, una sola consulta por mensaje trae encabezados Y cuerpo, y
+# Gmail API nunca incluye los bytes de adjuntos/imagenes salvo que se pida
+# su attachmentId explicitamente (cosa que nunca hacemos), asi que el texto
+# viene ya "limpio" de imagenes sin tener que resolver nada manualmente.
 # ---------------------------------------------------------------------------
 
-def _uid_str(u):
-    return u.decode() if isinstance(u, bytes) else str(u)
+def get_access_token(client_id, client_secret, refresh_token):
+    data = urllib.parse.urlencode({
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "refresh_token": refresh_token,
+        "grant_type": "refresh_token",
+    }).encode("utf-8")
+    req = urllib.request.Request(GMAIL_TOKEN_URL, data=data, method="POST")
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        return json.loads(resp.read())["access_token"]
 
 
-def _parse_uid_from_meta(meta):
-    s = meta.decode(errors="replace") if isinstance(meta, bytes) else str(meta)
-    m = re.search(r"UID (\d+)", s)
-    return m.group(1) if m else None
+def gmail_api_get(access_token, path, params=None):
+    url = f"{GMAIL_API_BASE}{path}"
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, method="GET")
+    req.add_header("Authorization", f"Bearer {access_token}")
+    with urllib.request.urlopen(req, timeout=25) as resp:
+        return json.loads(resp.read())
 
 
-def _fetch_literal_batch(imap, uids, spec, chunk_size):
-    """Trae UID + <spec> (algo con literal, tipo BODY[HEADER] o RFC822) para
-    una lista de UIDs, en tandas de chunk_size por consulta IMAP. Devuelve
-    {uid_str: email.message.Message}."""
-    results = {}
-    uid_strs = [_uid_str(u) for u in uids]
-    for i in range(0, len(uid_strs), chunk_size):
-        chunk = uid_strs[i:i + chunk_size]
-        uid_set = ",".join(chunk)
-        typ, data = imap.uid("fetch", uid_set, f"(UID {spec})")
-        if typ != "OK" or not data:
-            raise RuntimeError(f"fetch en lote fallo (typ={typ}) para spec={spec}")
-        for item in data:
-            if isinstance(item, tuple) and len(item) == 2:
-                meta, literal = item
-                uid_str = _parse_uid_from_meta(meta)
-                if uid_str and literal:
-                    try:
-                        results[uid_str] = email.message_from_bytes(literal)
-                    except Exception:
-                        pass
-        if i + chunk_size < len(uid_strs):
-            time.sleep(0.5)  # pequeño respiro entre tandas, evita picos de transferencia
-    return results
+def is_quota_error(exc):
+    if isinstance(exc, urllib.error.HTTPError) and exc.code == 429:
+        return True
+    s = str(exc).lower()
+    return any(hint in s for hint in ("ratelimitexceeded", "quotaexceeded", "429", "userratelimitexceeded"))
 
 
-def fetch_headers_batch(imap, uids, chunk_size=150):
-    """Solo encabezados (sin cuerpo) — para descartar mails fuera de ventana
-    de tiempo sin pagar el costo de bajar el cuerpo completo."""
-    return _fetch_literal_batch(imap, uids, "BODY.PEEK[HEADER]", chunk_size)
+class HistoryIdTooOldError(Exception):
+    """Gmail purga el historial despues de un tiempo (tipicamente ~1 semana).
+    Si el checkpoint guardado ya es demasiado viejo, history.list devuelve
+    404 en vez de la lista de cambios — hay que re-establecer el punto de
+    partida (sin reprocesar mails viejos, ya estan todos guardados)."""
+    pass
 
 
-def fetch_thrids_batch(imap, uids, chunk_size=150):
-    """X-GM-THRID (extension de Gmail) para varios UIDs de una — se usa como
-    clave estable para agrupar respuestas del mismo hilo a lo largo de
-    corridas, no para recorrer el hilo entero."""
-    results = {}
-    uid_strs = [_uid_str(u) for u in uids]
-    for i in range(0, len(uid_strs), chunk_size):
-        chunk = uid_strs[i:i + chunk_size]
-        uid_set = ",".join(chunk)
-        typ, data = imap.uid("fetch", uid_set, "(UID X-GM-THRID)")
-        if typ != "OK" or not data:
-            raise RuntimeError(f"fetch en lote fallo (typ={typ}) para X-GM-THRID")
-        for item in data:
-            if item is None:
-                continue
-            s = item.decode(errors="replace") if isinstance(item, bytes) else str(item)
-            uid_m = re.search(r"UID (\d+)", s)
-            thrid_m = re.search(r"X-GM-THRID\s+(\d+)", s)
-            if uid_m and thrid_m:
-                results[uid_m.group(1)] = format(int(thrid_m.group(1)), "x")
-    return results
+def gmail_list_message_ids(access_token, query, max_results_per_page=500):
+    """Pagina messages.list con un query de busqueda de Gmail (ej.
+    'after:1699999999'). Devuelve la lista completa de message IDs."""
+    ids = []
+    page_token = None
+    while True:
+        params = {"q": query, "maxResults": max_results_per_page}
+        if page_token:
+            params["pageToken"] = page_token
+        data = gmail_api_get(access_token, "/messages", params)
+        for m in data.get("messages", []) or []:
+            ids.append(m["id"])
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
+    return ids
 
 
-# ---------------------------------------------------------------------------
-# BODYSTRUCTURE: identifica QUE parte de cada mail es el texto (plano o
-# html), para poder pedirle a IMAP solo esa parte puntual — nunca las
-# imagenes/adjuntos. BODYSTRUCTURE en si es solo metadata (tipos, tamanos),
-# no baja contenido, asi que consultarla es practicamente gratis.
-# ---------------------------------------------------------------------------
-
-MAX_TEXT_PART_FETCH_BYTES = 80_000  # tope defensivo por si el texto plano fuera enorme
-
-
-def _tokenize_imap_list(s):
-    tokens = []
-    i, n = 0, len(s)
-    while i < n:
-        c = s[i]
-        if c in "()":
-            tokens.append(c)
-            i += 1
-        elif c == '"':
-            j = i + 1
-            buf = []
-            while j < n and s[j] != '"':
-                if s[j] == "\\" and j + 1 < n:
-                    buf.append(s[j + 1])
-                    j += 2
-                else:
-                    buf.append(s[j])
-                    j += 1
-            tokens.append("".join(buf))
-            i = j + 1
-        elif c.isspace():
-            i += 1
-        else:
-            j = i
-            while j < n and s[j] not in "() \t\r\n":
-                j += 1
-            atom = s[i:j]
-            tokens.append(None if atom.upper() == "NIL" else atom)
-            i = j
-    return tokens
+def gmail_list_history_message_ids(access_token, start_history_id):
+    """Incremental real (equivalente al viejo UID > last_uid, pero con la
+    API de Gmail): trae SOLO los mensajes agregados desde start_history_id,
+    sin tener que re-listar ni re-filtrar por fecha. Devuelve
+    (message_ids, nuevo_history_id)."""
+    ids = set()
+    page_token = None
+    new_history_id = start_history_id
+    while True:
+        params = {"startHistoryId": start_history_id, "historyTypes": "messageAdded", "maxResults": 500}
+        if page_token:
+            params["pageToken"] = page_token
+        try:
+            data = gmail_api_get(access_token, "/history", params)
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                raise HistoryIdTooOldError(str(e))
+            raise
+        for rec in data.get("history", []) or []:
+            for added in rec.get("messagesAdded", []) or []:
+                msg = added.get("message") or {}
+                if msg.get("id"):
+                    ids.add(msg["id"])
+        if "historyId" in data:
+            new_history_id = data["historyId"]
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            break
+    return list(ids), new_history_id
 
 
-def _parse_imap_tokens(tokens):
-    pos = [0]
-
-    def parse():
-        tok = tokens[pos[0]]
-        if tok == "(":
-            pos[0] += 1
-            lst = []
-            while tokens[pos[0]] != ")":
-                lst.append(parse())
-            pos[0] += 1
-            return lst
-        pos[0] += 1
-        return tok
-
-    return parse()
-
-
-def _extract_balanced(s, start):
-    """Devuelve el substring balanceado en parentesis que empieza en s[start]
-    (que debe ser '('), hasta su cierre correspondiente."""
-    depth = 0
-    in_quotes = False
-    for i in range(start, len(s)):
-        c = s[i]
-        if c == '"' and (i == 0 or s[i - 1] != "\\"):
-            in_quotes = not in_quotes
-        elif not in_quotes:
-            if c == "(":
-                depth += 1
-            elif c == ")":
-                depth -= 1
-                if depth == 0:
-                    return s[start:i + 1]
-    return s[start:]
-
-
-def parse_bodystructure(raw_line):
-    """raw_line: la linea de respuesta IMAP completa (str) que contiene
-    'BODYSTRUCTURE (...)'. Devuelve el arbol parseado (lista anidada) o None."""
-    m = re.search(r"BODYSTRUCTURE\s*(\()", raw_line, re.IGNORECASE)
-    if not m:
-        return None
-    start = m.start(1)
-    balanced = _extract_balanced(raw_line, start)
+def _decode_b64url(data):
+    if not data:
+        return b""
+    padded = data + "=" * (-len(data) % 4)
     try:
-        tokens = _tokenize_imap_list(balanced)
-        return _parse_imap_tokens(tokens)
+        return base64.urlsafe_b64decode(padded)
     except Exception:
+        return b""
+
+
+def _find_best_text_part(payload):
+    """Recorre el arbol de 'parts' de un mensaje de Gmail API buscando la
+    mejor parte de texto (prefiere text/plain sobre text/html). Nunca baja
+    adjuntos: si una parte no trae 'body.data' inline (o sea, es un adjunto
+    referenciado solo por attachmentId), se ignora sin pedir nada mas."""
+    mime = (payload.get("mimeType") or "").lower()
+    body = payload.get("body") or {}
+    parts = payload.get("parts") or []
+
+    if not parts:
+        if mime in ("text/plain", "text/html") and body.get("data"):
+            return (mime, body["data"])
         return None
 
-
-def _resolve_text_leaf(node, prefix):
-    """node: nodo parseado de bodystructure. prefix: lista de ints (path).
-    Devuelve (part_num_str, subtype, charset, encoding) del mejor candidato
-    de texto (prefiere text/plain sobre text/html), o None si no hay texto."""
-    if not isinstance(node, list) or not node:
-        return None
-
-    if isinstance(node[0], list):
-        # Es multipart: los primeros elementos (listas) son las sub-partes,
-        # hasta que aparece el string con el subtipo ("alternative","mixed",...).
-        children = []
-        for item in node:
-            if isinstance(item, list):
-                children.append(item)
-            else:
-                break
-        candidates = []
-        for idx, child in enumerate(children, start=1):
-            r = _resolve_text_leaf(child, prefix + [idx])
-            if r:
-                candidates.append(r)
-        for r in candidates:
-            if r[1] == "plain":
-                return r
-        for r in candidates:
-            if r[1] == "html":
-                return r
-        return None
-
-    # Nodo hoja: (type, subtype, params, id, description, encoding, size, ...)
-    type_ = (node[0] or "").lower() if isinstance(node[0], str) else ""
-    if type_ != "text":
-        return None
-    subtype = (node[1] or "").lower() if len(node) > 1 and isinstance(node[1], str) else ""
-    charset = "utf-8"
-    params = node[2] if len(node) > 2 else None
-    if isinstance(params, list):
-        for k in range(0, len(params) - 1, 2):
-            if isinstance(params[k], str) and params[k].upper() == "CHARSET" and params[k + 1]:
-                charset = params[k + 1]
-    encoding = "7BIT"
-    if len(node) > 5 and isinstance(node[5], str):
-        encoding = node[5]
-    part_num = ".".join(str(x) for x in prefix) if prefix else "1"
-    return (part_num, subtype, charset, encoding)
+    candidates = []
+    for part in parts:
+        r = _find_best_text_part(part)
+        if r:
+            candidates.append(r)
+    for r in candidates:
+        if r[0] == "text/plain":
+            return r
+    for r in candidates:
+        if r[0] == "text/html":
+            return r
+    return None
 
 
-def fetch_bodystructures_batch(imap, uids, chunk_size=150):
-    """BODYSTRUCTURE (solo metadata, no baja contenido) para varios UIDs de
-    una. Devuelve {uid_str: (part_num, subtype, charset, encoding) | None}."""
-    results = {}
-    uid_strs = [_uid_str(u) for u in uids]
-    for i in range(0, len(uid_strs), chunk_size):
-        chunk = uid_strs[i:i + chunk_size]
-        uid_set = ",".join(chunk)
-        typ, data = imap.uid("fetch", uid_set, "(UID BODYSTRUCTURE)")
-        if typ != "OK" or not data:
-            raise RuntimeError(f"fetch en lote fallo (typ={typ}) para BODYSTRUCTURE")
-        for item in data:
-            if item is None:
-                continue
-            s = item.decode(errors="replace") if isinstance(item, bytes) else str(item)
-            uid_m = re.search(r"UID (\d+)", s)
-            if not uid_m:
-                continue
-            tree = parse_bodystructure(s)
-            resolved = _resolve_text_leaf(tree, []) if tree else None
-            results[uid_m.group(1)] = resolved
-        if i + chunk_size < len(uid_strs):
-            time.sleep(0.3)
-    return results
-
-
-def build_body_text(subtype, charset, encoding, raw_bytes):
-    """Arma un mini-mensaje MIME de una sola parte (encabezado sintetico +
-    los bytes ya bajados de esa parte) para reusar el decoder estandar de
-    Content-Transfer-Encoding (base64/quoted-printable/etc.) de la libreria
-    email, sin tener que reimplementarlo a mano."""
-    header = f"Content-Type: text/{subtype}; charset={charset}\r\nContent-Transfer-Encoding: {encoding}\r\n\r\n".encode("ascii", errors="replace")
-    try:
-        part_msg = email.message_from_bytes(header + raw_bytes)
-        payload = part_msg.get_payload(decode=True)
-        text = payload.decode(charset or "utf-8", errors="replace") if payload is not None else ""
-    except Exception:
-        text = raw_bytes.decode("utf-8", errors="replace")
-    if subtype == "html":
+def extract_body_text(payload):
+    best = _find_best_text_part(payload)
+    if not best:
+        return ""
+    mime, b64data = best
+    raw = _decode_b64url(b64data)
+    text = raw.decode("utf-8", errors="replace")
+    if mime == "text/html":
         text = strip_html(text)
     return truncate_body(text)
 
 
-def fetch_body_texts_batch(imap, resolved_by_uid, chunk_size=100):
-    """Baja SOLO la parte de texto resuelta por BODYSTRUCTURE para cada UID
-    (nunca imagenes/adjuntos). Agrupa por numero de parte (normalmente son
-    pocos grupos distintos: "1", "1.1", etc.) para seguir haciendo pocas
-    consultas IMAP en total. Devuelve {uid_str: texto_ya_decodificado}."""
-    by_part = {}
-    for uid_str, resolved in resolved_by_uid.items():
-        if not resolved:
-            continue
-        part_num, subtype, charset, encoding = resolved
-        by_part.setdefault(part_num, []).append(uid_str)
+def build_synthetic_message(headers_list):
+    """Arma un email.message.Message a partir de la lista de headers que
+    devuelve Gmail API (payload.headers: [{name, value}, ...]), para poder
+    reusar TAL CUAL toda la logica de clasificacion existente (que espera
+    msg.get(...)/msg.get_all(...) como un mensaje real de la libreria email)."""
+    msg = Message()
+    for h in headers_list or []:
+        name = h.get("name")
+        value = h.get("value")
+        if name is not None:
+            msg[name] = value
+    return msg
 
-    texts = {}
-    for part_num, uid_strs in by_part.items():
-        spec = f"BODY.PEEK[{part_num}]<0.{MAX_TEXT_PART_FETCH_BYTES}>"
-        for i in range(0, len(uid_strs), chunk_size):
-            chunk = uid_strs[i:i + chunk_size]
-            uid_set = ",".join(chunk)
-            typ, data = imap.uid("fetch", uid_set, f"(UID {spec})")
-            if typ != "OK" or not data:
-                raise RuntimeError(f"fetch en lote fallo (typ={typ}) para {spec}")
-            for item in data:
-                if isinstance(item, tuple) and len(item) == 2:
-                    meta, literal = item
-                    uid_str = _parse_uid_from_meta(meta)
-                    if uid_str and literal is not None:
-                        _, subtype, charset, encoding = resolved_by_uid[uid_str]
-                        texts[uid_str] = build_body_text(subtype, charset, encoding, literal)
-            if i + chunk_size < len(uid_strs):
-                time.sleep(0.3)
-    return texts
+
+def fetch_message_full(access_token, message_id):
+    return gmail_api_get(access_token, f"/messages/{message_id}", {"format": "full"})
 
 
 # ---------------------------------------------------------------------------
 # Clasificacion: devuelve una lista de categorias aplicables (un mail puede
 # pertenecer a mas de una a la vez, ej. "it" + "escalamientosIT"), mas los
 # datos que necesita cada categoria (origen del hilo, cierre detectado).
-# No hace NINGUNA consulta IMAP propia — recibe el encabezado (ya bajado en
-# lote) y el texto del cuerpo (ya resuelto/bajado via BODYSTRUCTURE, sin
-# imagenes) por separado; el X-GM-THRID se resuelve aparte, en lote, en
-# process_candidate_uids().
+# No hace NINGUNA consulta a Gmail API propia — recibe un email.message.Message
+# sintetico (armado a partir de los headers que ya trajo Gmail API) y el
+# texto del cuerpo ya resuelto, por separado. El threadId se resuelve aparte,
+# en process_candidate_messages().
 # ---------------------------------------------------------------------------
 
 def classify(msg, body):
@@ -778,45 +664,44 @@ class SupabaseClient:
         return None
 
 
-QUOTA_ERROR_HINTS = ("overquota", "bandwidth", "command or bandwidth limits")
-QUOTA_COOLDOWN_MS = 90 * 60 * 1000  # 90 min de enfriamiento tras un OVERQUOTA
+QUOTA_COOLDOWN_MS = 30 * 60 * 1000  # 30 min de enfriamiento tras un 429 de Gmail API
 
 
-def is_quota_error(exc):
-    s = str(exc).lower()
-    return any(hint in s for hint in QUOTA_ERROR_HINTS)
-
-
-def process_candidate_uids(imap, sb, uids, window_start_ms=None, window_end_ms=None, prefilter_headers=False):
-    """Clasifica y guarda en Supabase una lista de UIDs candidatos (ya
-    ordenados o no).
+def process_candidate_messages(access_token, sb, message_ids, window_start_ms=None, window_end_ms=None, prefilter_headers=False):
+    """Clasifica y guarda en Supabase una lista de message IDs candidatos.
 
     Los encabezados SIEMPRE se bajan primero (son livianos y ya nos sirven
     tanto para el prefiltro de fecha como para clasificar despues). Si
     prefilter_headers=True, se descartan los que caen fuera de
     [window_start_ms, window_end_ms] antes de seguir.
 
-    Para el cuerpo, en vez de bajar el mensaje completo (que incluye
-    imagenes/adjuntos que no usamos), se consulta primero BODYSTRUCTURE
-    (metadata pura, no baja contenido) para saber exactamente que parte es
-    texto, y se baja SOLO esa parte puntual. Esto es lo que evita gastar el
-    ancho de banda de Gmail en imagenes que despues se tiran.
+    Para el cuerpo, Gmail API (format=full) nunca incluye los bytes de
+    adjuntos/imagenes salvo que se pida su attachmentId por separado (cosa
+    que este script nunca hace), asi que alcanza con UNA consulta por
+    mensaje para tener encabezados + cuerpo de texto ya resuelto.
+
+    record_id = threadId de Gmail (siempre disponible via la API, a
+    diferencia del viejo X-GM-THRID de IMAP que a veces habia que resolver
+    aparte) — asi una conversacion entera sigue colapsando en una sola fila
+    de "mails" que se va actualizando, igual que antes.
 
     Devuelve la cantidad de mails guardados (con >=1 categoria). Puede tirar
-    una excepcion si algun fetch en lote falla (el llamador decide que hacer
-    con el checkpoint en ese caso)."""
-    if not uids:
+    una excepcion si algun fetch falla (el llamador decide que hacer con el
+    checkpoint en ese caso)."""
+    if not message_ids:
         return 0
 
-    uids_sorted = sorted(uids, key=lambda u: int(_uid_str(u)))
-    headers = fetch_headers_batch(imap, uids_sorted)
-
-    fetch_targets = []
-    for u in uids_sorted:
-        uid_str = _uid_str(u)
-        hmsg = headers.get(uid_str)
-        if hmsg is None:
+    processed = 0
+    for msg_id in message_ids:
+        try:
+            full = fetch_message_full(access_token, msg_id)
+        except Exception as e:
+            log(f"[gmail] no se pudo bajar el mensaje {msg_id}: {type(e).__name__}: {e}")
             continue
+
+        payload = full.get("payload") or {}
+        hmsg = build_synthetic_message(payload.get("headers"))
+
         if prefilter_headers:
             h_ms = epoch_ms_from_date_header(hmsg)
             if h_ms is None:
@@ -825,38 +710,17 @@ def process_candidate_uids(imap, sb, uids, window_start_ms=None, window_end_ms=N
                 continue
             if window_end_ms is not None and h_ms > window_end_ms:
                 continue
-        fetch_targets.append(u)
-    if prefilter_headers:
-        log(f"Dentro de ventana tras chequear encabezados: {len(fetch_targets)}")
 
-    resolved = fetch_bodystructures_batch(imap, fetch_targets)
-    body_texts = fetch_body_texts_batch(imap, resolved)
-
-    results_by_uid = {}
-    for u in fetch_targets:
-        uid_str = _uid_str(u)
-        hmsg = headers.get(uid_str)
-        if hmsg is None:
-            continue
-        body = body_texts.get(uid_str, "")
+        body = extract_body_text(payload)
         result = classify(hmsg, body)
-        if result is not None:
-            results_by_uid[uid_str] = result
-
-    needing_thrid = [uid_str for uid_str, r in results_by_uid.items() if r["needs_thrid"]]
-    thrids = fetch_thrids_batch(imap, needing_thrid) if needing_thrid else {}
-
-    processed = 0
-    for u in fetch_targets:
-        uid_str = _uid_str(u)
-        result = results_by_uid.get(uid_str)
         if result is None:
             continue
-        thrid = thrids.get(uid_str)
-        record_id = thrid or f"uid-{uid_str}"
+
+        thread_id = full.get("threadId")
+        record_id = thread_id or f"msg-{msg_id}"
         activity_date = arg_calendar_date_str(result["sent_at_ms"])
         for category in result["categories"]:
-            sb.upsert_mail(record_id, thrid, category, result, result["sent_at_ms"])
+            sb.upsert_mail(record_id, thread_id, category, result, result["sent_at_ms"])
             try:
                 sb.record_activity(record_id, category, activity_date)
             except Exception as e:
@@ -867,44 +731,38 @@ def process_candidate_uids(imap, sb, uids, window_start_ms=None, window_end_ms=N
 
 
 def set_quota_cooldown(sb, now_ms):
-    """Gmail bloquea la cuenta por IMAP (OVERQUOTA) normalmente ~1h, a veces
-    hasta 24hs si se repite. Guardamos hasta cuando conviene NO intentar de
-    nuevo, para que las corridas automaticas se salteen solas en vez de
-    seguir golpeando la cuenta (lo que puede extender el bloqueo)."""
+    """Si Gmail API devuelve un 429 (rate limit), guardamos hasta cuando
+    conviene NO intentar de nuevo, para que las corridas automaticas se
+    salteen solas un rato en vez de seguir golpeando la API."""
     until_ms = now_ms + QUOTA_COOLDOWN_MS
     try:
         sb.set_meta("quota_cooldown_until", until_ms)
-        log(f"[CUOTA] Se detecto OVERQUOTA. Enfriamiento hasta {ms_to_iso(until_ms)}.")
+        log(f"[CUOTA] Se detecto rate limit de Gmail API. Enfriamiento hasta {ms_to_iso(until_ms)}.")
     except Exception as e:
         log(f"No se pudo guardar el enfriamiento de cuota: {type(e).__name__}: {e}")
 
 
-def run_backfill(sb, gmail_user, gmail_pass, now_ms, backfill_hours):
-    """Barrido UNICO por fecha (SINCE), pensado para completar historial que
-    el checkpoint de UID de las corridas en vivo ya dejo atras. A proposito
-    NO toca 'last_uid' ni 'last_run': es independiente de la maquinaria
-    incremental, para no arriesgar el estado de las corridas automaticas."""
+def run_backfill(sb, access_token, now_ms, backfill_hours):
+    """Barrido UNICO por fecha (busqueda 'after:' de Gmail, granularidad de
+    dia), pensado para completar historial que el checkpoint incremental ya
+    dejo atras. A proposito NO toca 'gmail_history_id' ni 'last_run': es
+    independiente de la maquinaria incremental, para no arriesgar el estado
+    de las corridas automaticas."""
     error_msg = None
     processed = 0
     try:
-        imap = imaplib.IMAP4_SSL(IMAP_HOST, timeout=25)
-        imap.login(gmail_user, gmail_pass)
-        imap.select("INBOX")
-
         window_start_ms = now_ms - int(backfill_hours * 3600 * 1000)
-        since_dt = datetime.fromtimestamp(window_start_ms / 1000, tz=timezone.utc) - timedelta(days=1)
-        since_date = since_dt.strftime("%d-%b-%Y")
-        typ, data_uids = imap.uid("search", None, f"(SINCE {since_date})")
-        uids = data_uids[0].split() if typ == "OK" and data_uids and data_uids[0] else []
-        log(f"[BACKFILL] Candidatos (SINCE {since_date}, ultimas {backfill_hours}h): {len(uids)}")
+        after_epoch_s = int(window_start_ms / 1000) - 86400  # 1 dia de margen (Gmail "after:" es por dia)
+        query = f"after:{after_epoch_s}"
+        message_ids = gmail_list_message_ids(access_token, query)
+        log(f"[BACKFILL] Candidatos ({query}, ultimas {backfill_hours}h): {len(message_ids)}")
 
-        processed = process_candidate_uids(
-            imap, sb, uids,
+        processed = process_candidate_messages(
+            access_token, sb, message_ids,
             window_start_ms=window_start_ms,
             window_end_ms=now_ms + 5 * 60 * 1000,
             prefilter_headers=True,
         )
-        imap.logout()
     except Exception as e:
         error_msg = f"{type(e).__name__}: {e}"
         log(f"[BACKFILL] ERROR: {error_msg}")
@@ -926,68 +784,56 @@ def run_backfill(sb, gmail_user, gmail_pass, now_ms, backfill_hours):
         log(f"[BACKFILL] Con errores: {error_msg}")
 
 
-def run_incremental(sb, gmail_user, gmail_pass, now_ms):
-    """Corrida normal: incremental por UID una vez que existe checkpoint, o
-    bootstrap acotado (MAX_LOOKBACK_MS) la primera vez que corre el proyecto."""
-    last_uid = None
-    try:
-        raw_last_uid = sb.get_meta("last_uid")
-        if raw_last_uid is not None:
-            last_uid = int(raw_last_uid)
-    except Exception as e:
-        log(f"No se pudo leer el ultimo checkpoint (last_uid) de la base: {type(e).__name__}: {e}")
+def run_incremental(sb, access_token, now_ms):
+    """Corrida normal: incremental por historyId (Gmail API) una vez que
+    existe checkpoint, o bootstrap la primera vez que corre el proyecto (o
+    si el checkpoint ya quedo demasiado viejo y Gmail purgo ese historial).
 
-    MAX_LOOKBACK_MS = 60 * 60 * 1000
+    El bootstrap NO reprocesa mails viejos: la casilla nueva arranca vacia de
+    verdad (el historial previo ya esta migrado en Supabase desde la casilla
+    anterior), asi que alcanza con establecer el punto de partida."""
+    last_history_id = None
+    try:
+        raw = sb.get_meta("gmail_history_id")
+        if raw is not None:
+            last_history_id = str(raw)
+    except Exception as e:
+        log(f"No se pudo leer el ultimo checkpoint (gmail_history_id) de la base: {type(e).__name__}: {e}")
 
     error_msg = None
     processed = 0
-    max_ok_uid = last_uid
+    new_history_id = last_history_id
 
     try:
-        imap = imaplib.IMAP4_SSL(IMAP_HOST, timeout=25)
-        imap.login(gmail_user, gmail_pass)
-        imap.select("INBOX")
-
-        if last_uid is not None:
-            typ, data_uids = imap.uid("search", None, f"(UID {last_uid + 1}:*)")
-            uids = data_uids[0].split() if typ == "OK" and data_uids and data_uids[0] else []
-            uids = [u for u in uids if int(_uid_str(u)) > last_uid]
-            log(f"Candidatos nuevos (UID > {last_uid}): {len(uids)}")
-            processed = process_candidate_uids(imap, sb, uids, prefilter_headers=False)
+        if last_history_id is not None:
+            try:
+                message_ids, new_history_id = gmail_list_history_message_ids(access_token, last_history_id)
+                log(f"Candidatos nuevos (history desde {last_history_id}): {len(message_ids)}")
+                processed = process_candidate_messages(access_token, sb, message_ids, prefilter_headers=False)
+            except HistoryIdTooOldError:
+                log("[historyId] El checkpoint ya era muy viejo (Gmail lo purgo) — se re-establece el punto de partida, sin reprocesar historial.")
+                profile = gmail_api_get(access_token, "/profile")
+                new_history_id = profile.get("historyId")
         else:
-            search_window_start = now_ms - MAX_LOOKBACK_MS
-            since_dt = datetime.fromtimestamp(search_window_start / 1000, tz=timezone.utc) - timedelta(days=1)
-            since_date = since_dt.strftime("%d-%b-%Y")
-            typ, data_uids = imap.uid("search", None, f"(SINCE {since_date})")
-            uids = data_uids[0].split() if typ == "OK" and data_uids and data_uids[0] else []
-            log(f"Primera corrida (sin checkpoint de UID) - candidatos (SINCE {since_date}): {len(uids)}")
-            processed = process_candidate_uids(
-                imap, sb, uids,
-                window_start_ms=search_window_start,
-                window_end_ms=now_ms + 5 * 60 * 1000,
-                prefilter_headers=True,
-            )
-
-        if uids:
-            max_ok_uid = int(_uid_str(max(uids, key=lambda u: int(_uid_str(u)))))
-
-        imap.logout()
+            profile = gmail_api_get(access_token, "/profile")
+            new_history_id = profile.get("historyId")
+            log(f"Primera corrida (sin checkpoint) - estableciendo punto de partida en historyId={new_history_id}, sin procesar historial previo.")
     except Exception as e:
         error_msg = f"{type(e).__name__}: {e}"
         log(f"ERROR durante la corrida: {error_msg}")
         if is_quota_error(e):
             set_quota_cooldown(sb, now_ms)
 
-    if max_ok_uid is not None and max_ok_uid != last_uid:
+    if new_history_id is not None and str(new_history_id) != str(last_history_id):
         try:
-            sb.set_meta("last_uid", max_ok_uid)
+            sb.set_meta("gmail_history_id", str(new_history_id))
         except Exception as e:
-            log(f"No se pudo guardar el checkpoint de UID: {type(e).__name__}: {e}")
+            log(f"No se pudo guardar el checkpoint de historyId: {type(e).__name__}: {e}")
 
     try:
         sb.set_meta("last_run", {
             "timestamp": now_ms,
-            "lastUid": max_ok_uid,
+            "historyId": new_history_id,
             "processed": processed,
             "error": error_msg,
         })
@@ -1118,9 +964,26 @@ def scrape_boca_fixture():
         raise ValueError("no se pudo extraer ningun partido (la pagina puede haber cambiado de estructura)")
 
     return {
-        "proximos": [{"dia": r["dia"], "lv": r["lv"], "rival": r["rival"], "hora": r["valor"]} for r in proximos],
+        "proximos": [{"dia": r["dia"], "lv": r["lv"], "rival": r["rival"], "hora": _correct_boca_hora(r["valor"])} for r in proximos],
         "resultados": [{"dia": r["dia"], "lv": r["lv"], "rival": r["rival"], "resultado": r["valor"]} for r in resultados],
     }
+
+
+# Promiedos muestra el horario de los partidos segun la ubicacion/huso
+# horario de quien pide la pagina, no el de Argentina. El servidor de
+# GitHub Actions no esta en Argentina, asi que el horario que devuelve la
+# pagina viene corrido. Comprobado empiricamente (comparando contra lo que
+# ve un usuario real en su navegador en Argentina): siempre +2 horas.
+BOCA_HORA_CORRECTION_HOURS = 2
+
+
+def _correct_boca_hora(hora_str):
+    m = re.match(r"^(\d{1,2}):(\d{2})$", hora_str)
+    if not m:
+        return hora_str
+    h, mnt = int(m.group(1)), int(m.group(2))
+    h = (h + BOCA_HORA_CORRECTION_HOURS) % 24
+    return f"{h:02d}:{mnt:02d}"
 
 
 def update_boca_fixture(sb, now_ms, force=False):
@@ -1160,13 +1023,16 @@ def main():
         run_provision_users(sb, provision_users_raw)
         return
 
-    gmail_user = os.environ.get("GMAIL_USER")
-    gmail_pass = os.environ.get("GMAIL_APP_PASSWORD")
+    gmail_client_id = os.environ.get("GMAIL_OAUTH_CLIENT_ID")
+    gmail_client_secret = os.environ.get("GMAIL_OAUTH_CLIENT_SECRET")
+    gmail_refresh_token = os.environ.get("GMAIL_OAUTH_REFRESH_TOKEN")
     now_ms = int(time.time() * 1000)
 
     missing = [
         name for name, val in [
-            ("GMAIL_USER", gmail_user), ("GMAIL_APP_PASSWORD", gmail_pass),
+            ("GMAIL_OAUTH_CLIENT_ID", gmail_client_id),
+            ("GMAIL_OAUTH_CLIENT_SECRET", gmail_client_secret),
+            ("GMAIL_OAUTH_REFRESH_TOKEN", gmail_refresh_token),
             ("SUPABASE_URL", supabase_url), ("SUPABASE_SERVICE_ROLE_KEY", supabase_key),
         ] if not val
     ]
@@ -1175,6 +1041,12 @@ def main():
         sys.exit(0)
 
     sb = SupabaseClient(supabase_url, supabase_key)
+
+    try:
+        access_token = get_access_token(gmail_client_id, gmail_client_secret, gmail_refresh_token)
+    except Exception as e:
+        log(f"ERROR: no se pudo obtener el access token de Gmail API: {type(e).__name__}: {e}")
+        sys.exit(0)
 
     # Widget de fixture de Boca (solo se actualiza los lunes; no-op el resto
     # de los dias, salvo que se fuerce con BOCA_FORCE_UPDATE=1 para probar).
@@ -1193,19 +1065,19 @@ def main():
 
     if cooldown_until is not None and now_ms < int(cooldown_until):
         remaining_min = int((int(cooldown_until) - now_ms) / 60000)
-        log(f"[CUOTA] Todavia en enfriamiento por OVERQUOTA (quedan ~{remaining_min} min). Se saltea esta corrida.")
+        log(f"[CUOTA] Todavia en enfriamiento (quedan ~{remaining_min} min). Se saltea esta corrida.")
         return
 
     backfill_hours_raw = (os.environ.get("BACKFILL_HOURS") or "").strip()
     if backfill_hours_raw:
         try:
             backfill_hours = float(backfill_hours_raw)
-            run_backfill(sb, gmail_user, gmail_pass, now_ms, backfill_hours)
+            run_backfill(sb, access_token, now_ms, backfill_hours)
             return
         except ValueError:
             log(f"BACKFILL_HOURS invalido: {backfill_hours_raw!r}, se ignora y corre normal")
 
-    run_incremental(sb, gmail_user, gmail_pass, now_ms)
+    run_incremental(sb, access_token, now_ms)
 
 
 if __name__ == "__main__":
