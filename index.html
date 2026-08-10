@@ -363,6 +363,8 @@
     authRootEl.style.display = "none";
     appRootEl.style.display = "block";
     mascotWidgetEl.style.display = "block";
+    var mascotTeam = USER_TEAM_MAP[username];
+    mascotWidgetEl.src = mascotTeam ? ("assets/mascot-" + mascotTeam + ".png") : "assets/mascot.png";
     userMenuBtnEl.style.display = "flex";
     userMenuBtnEl.textContent = USERNAME_EMOJI[username] || "👤";
     userMenuNameEl.textContent = displayNameFor(username);
