@@ -86,6 +86,10 @@
   ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
   input[type="datetime-local"]::-webkit-calendar-picker-indicator { filter: var(--dtp-filter, none); cursor: pointer; }
   html[data-theme="dark"] input[type="datetime-local"]::-webkit-calendar-picker-indicator { filter: invert(0.8); }
+  @keyframes mascotFloat {
+    0%, 100% { transform: translateY(0) rotate(0deg); }
+    50% { transform: translateY(-14px) rotate(-2deg); }
+  }
 </style>
 </head>
 <body style="margin:0;padding:36px 24px 48px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Arial,sans-serif;background:linear-gradient(180deg,var(--bg-top) 0%,var(--bg-bottom) 220px);color:var(--text-primary);font-size:16px;">
@@ -221,6 +225,8 @@
   </div>
 </div>
 
+<img id="mascotWidget" src="assets/mascot.png" alt="Mascota de Resumen LAB" title="Resumen LAB" style="display:none;position:fixed;left:16px;bottom:0px;width:130px;z-index:75;animation:mascotFloat 3.2s ease-in-out infinite;filter:drop-shadow(0 6px 10px rgba(0,0,0,0.25));">
+
 <script id="supabase-config" type="application/json">
 {
   "url": "https://afcowvvrkhborbjndwjo.supabase.co",
@@ -350,11 +356,13 @@
   }
 
   var currentUsername = "";
+  var mascotWidgetEl = document.getElementById("mascotWidget");
 
   function showApp(username) {
     currentUsername = username;
     authRootEl.style.display = "none";
     appRootEl.style.display = "block";
+    mascotWidgetEl.style.display = "block";
     userMenuBtnEl.style.display = "flex";
     userMenuBtnEl.textContent = USERNAME_EMOJI[username] || "👤";
     userMenuNameEl.textContent = displayNameFor(username);
@@ -474,6 +482,7 @@
     userMenuNameEl.textContent = "";
     closeUserMenu();
     bocaWidgetEl.style.display = "none";
+    mascotWidgetEl.style.display = "none";
     authRootEl.style.display = "block";
     showAuthScreen("login");
   }
