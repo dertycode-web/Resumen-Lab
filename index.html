@@ -749,6 +749,55 @@
     else { LAPSO_CATEGORY_KEYS.push(g.key); }
   });
 
+  // Para agrupar filas que en realidad son la MISMA cadena real pero Gmail
+  // las separo en hilos distintos (tipico: el mail de cierre se mando como
+  // mail nuevo en vez de responder dentro del hilo, y encima le cambiaron
+  // el asunto agregando "Solucionado |" / "Resuelto" / etc). Se ignoran esas
+  // palabras de cierre y separadores para comparar, y solo se unen si
+  // arrancaron el MISMO DIA (hora Argentina) — asi una cadena real que se
+  // repite en dias distintos con el mismo asunto generico (ej. una
+  // afectacion recurrente) sigue apareciendo por separado.
+  var CLOSURE_WORDS_RE = /\b(solucionado|resuelto|finalizado|normalizado)\b/gi;
+  function normalizeSubjectForGrouping(subject) {
+    return (subject || "")
+      .replace(CLOSURE_WORDS_RE, "")
+      .replace(/[|:–—-]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+  }
+
+  function groupLapsoItems(items) {
+    var groups = {};
+    var order = [];
+    items.forEach(function (item) {
+      var dayKey = typeof item.originMs === "number" ? argDateStr(item.originMs) : "sindia";
+      var key = dayKey + "||" + normalizeSubjectForGrouping(item.subject);
+      if (!groups[key]) {
+        groups[key] = [];
+        order.push(key);
+      }
+      groups[key].push(item);
+    });
+    return order.map(function (key) {
+      var groupItems = groups[key];
+      var earliest = groupItems.reduce(function (a, b) {
+        var am = typeof a.originMs === "number" ? a.originMs : Infinity;
+        var bm = typeof b.originMs === "number" ? b.originMs : Infinity;
+        return bm < am ? b : a;
+      });
+      var resolved = groupItems.some(function (it) { return it.resolved === true; });
+      return {
+        id: earliest.id,
+        subject: earliest.subject,
+        resolved: resolved,
+        originMs: earliest.originMs,
+        category: earliest.category,
+        showPendiente: earliest.showPendiente
+      };
+    });
+  }
+
   // A diferencia de buildBuckets, esta version NUNCA aplica el split
   // Nuevo/EnCurso: cada categoria va directo a su bucket plano, ordenada por
   // fecha, tal cual la pidio el usuario ("una abajo de la otra").
@@ -771,6 +820,10 @@
           });
         }
       });
+    });
+
+    LAPSO_CATEGORY_KEYS.forEach(function (k) {
+      buckets[k] = groupLapsoItems(buckets[k]);
     });
 
     return buckets;
