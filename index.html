@@ -363,7 +363,7 @@
     authRootEl.style.display = "none";
     appRootEl.style.display = "block";
     mascotWidgetEl.style.display = "block";
-    var mascotTeam = USER_TEAM_MAP[username];
+    var mascotTeam = MASCOT_TEAM_MAP[username];
     mascotWidgetEl.src = mascotTeam ? ("assets/mascot-" + mascotTeam + ".png") : "assets/mascot.png";
     userMenuBtnEl.style.display = "flex";
     userMenuBtnEl.textContent = USERNAME_EMOJI[username] || "👤";
@@ -379,6 +379,8 @@
   // con SU equipo asignado, desplegable cerrado por defecto, abajo a la
   // derecha. Se actualiza solo una vez por semana (los lunes) desde el
   // script de Python; aca solo se lee y se muestra. ----
+  // USER_TEAM_MAP: solo equipos con fixture real (scrapeado por el script de
+  // Python) — controla el widget desplegable de partidos/resultados.
   var USER_TEAM_MAP = {
     "Alejandro_Bonnet": "boca",
     "Lautaro_Rojas": "boca",
@@ -391,6 +393,12 @@
     river: { label: "River Plate", icon: "⚽" },
     belgrano: { label: "Belgrano", icon: "⚽" }
   };
+  // MASCOT_TEAM_MAP: que imagen de mascota usar por usuario. Incluye a los de
+  // arriba (mismo equipo) mas otros que solo tienen mascota personalizada,
+  // sin widget de fixture (no hay scraping de ese deporte/equipo).
+  var MASCOT_TEAM_MAP = Object.assign({}, USER_TEAM_MAP, {
+    "Ignacio_Suarez": "voley"
+  });
   var bocaWidgetEl = document.getElementById("bocaWidget");
   var bocaToggleEl = document.getElementById("bocaToggle");
   var bocaToggleLabelEl = document.getElementById("bocaToggleLabel");
