@@ -906,15 +906,22 @@ def run_provision_users(sb, mapping_text):
 
 
 # ---------------------------------------------------------------------------
-# Fixture de Boca Juniors (widget del dashboard, solo para 3 usuarios).
-# Se actualiza como mucho una vez por semana (los lunes, hora Argentina),
-# leyendo la pagina publica de Promiedos. Si el scraping falla por lo que
-# sea (la pagina cambio de estructura, no responde, etc.) simplemente se
-# loguea el error y se sigue de largo — nunca debe romper la corrida normal
-# de clasificacion de mails.
+# Fixture de equipos de futbol (widget del dashboard, solo para algunos
+# usuarios puntuales, cada uno con SU equipo). Se actualiza como mucho una
+# vez por semana (los lunes, hora Argentina), leyendo la pagina publica de
+# Promiedos. Si el scraping falla por lo que sea (la pagina cambio de
+# estructura, no responde, etc.) simplemente se loguea el error y se sigue
+# de largo — nunca debe romper la corrida normal de clasificacion de mails.
 # ---------------------------------------------------------------------------
 
-BOCA_FIXTURE_URL = "https://www.promiedos.com.ar/team/boca-juniors/igg"
+# Cada equipo tiene su URL de Promiedos y su propia clave en la tabla "meta"
+# (fixture_<team>), para que cada usuario vea el fixture de su propio equipo
+# sin pisarse entre ellos.
+TEAM_FIXTURES = {
+    "boca": "https://www.promiedos.com.ar/team/boca-juniors/igg",
+    "river": "https://www.promiedos.com.ar/team/river-plate/igi",
+    "belgrano": "https://www.promiedos.com.ar/team/belgrano/fhid",
+}
 BOCA_DATE_RE = re.compile(r"^\d{2}/\d{2}$")
 BOCA_LV_RE = re.compile(r"^[LV]$")
 BOCA_TIME_RE = re.compile(r"^\d{1,2}:\d{2}$")
@@ -967,9 +974,9 @@ def _parse_boca_rows(section_lines, last_field_re, max_rows=5):
     return rows
 
 
-def scrape_boca_fixture():
+def scrape_team_fixture(team_url):
     req = urllib.request.Request(
-        BOCA_FIXTURE_URL,
+        team_url,
         headers={"User-Agent": "Mozilla/5.0 (compatible; ResumenLabBot/1.0)"},
     )
     with urllib.request.urlopen(req, timeout=20) as resp:
@@ -986,7 +993,7 @@ def scrape_boca_fixture():
         raise ValueError("no se pudo extraer ningun partido (la pagina puede haber cambiado de estructura)")
 
     return {
-        "proximos": [{"dia": r["dia"], "lv": r["lv"], "rival": r["rival"], "hora": _correct_boca_hora(r["valor"])} for r in proximos],
+        "proximos": [{"dia": r["dia"], "lv": r["lv"], "rival": r["rival"], "hora": _correct_fixture_hora(r["valor"])} for r in proximos],
         "resultados": [{"dia": r["dia"], "lv": r["lv"], "rival": r["rival"], "resultado": r["valor"]} for r in resultados],
     }
 
@@ -995,40 +1002,48 @@ def scrape_boca_fixture():
 # horario de quien pide la pagina, no el de Argentina. El servidor de
 # GitHub Actions no esta en Argentina, asi que el horario que devuelve la
 # pagina viene corrido. Comprobado empiricamente (comparando contra lo que
-# ve un usuario real en su navegador en Argentina): siempre +2 horas.
-BOCA_HORA_CORRECTION_HOURS = 2
+# ve un usuario real en su navegador en Argentina): siempre +2 horas. Se
+# asume el mismo desfase para cualquier equipo (depende del servidor que
+# pide la pagina, no del equipo).
+FIXTURE_HORA_CORRECTION_HOURS = 2
 
 
-def _correct_boca_hora(hora_str):
+def _correct_fixture_hora(hora_str):
     m = re.match(r"^(\d{1,2}):(\d{2})$", hora_str)
     if not m:
         return hora_str
     h, mnt = int(m.group(1)), int(m.group(2))
-    h = (h + BOCA_HORA_CORRECTION_HOURS) % 24
+    h = (h + FIXTURE_HORA_CORRECTION_HOURS) % 24
     return f"{h:02d}:{mnt:02d}"
 
 
-def update_boca_fixture(sb, now_ms, force=False):
+def update_team_fixture(sb, now_ms, team, team_url, force=False):
     dt_arg = datetime.fromtimestamp(now_ms / 1000, tz=timezone.utc) - timedelta(hours=3)
     if not force and dt_arg.weekday() != 0:  # 0 = lunes
         return
     today_str = dt_arg.strftime("%Y-%m-%d")
+    checkpoint_key = f"fixture_{team}_last_monday"
     try:
-        last_monday = sb.get_meta("boca_fixture_last_monday")
+        last_monday = sb.get_meta(checkpoint_key)
     except Exception as e:
-        log(f"[boca] no se pudo leer checkpoint: {type(e).__name__}: {e}")
+        log(f"[fixture:{team}] no se pudo leer checkpoint: {type(e).__name__}: {e}")
         last_monday = None
     if not force and last_monday == today_str:
         return  # ya se actualizo este lunes
 
     try:
-        data = scrape_boca_fixture()
+        data = scrape_team_fixture(team_url)
         data["updated_at"] = now_ms
-        sb.set_meta("boca_fixture", data)
-        sb.set_meta("boca_fixture_last_monday", today_str)
-        log(f"[boca] fixture actualizado: {len(data['proximos'])} proximos, {len(data['resultados'])} resultados")
+        sb.set_meta(f"fixture_{team}", data)
+        sb.set_meta(checkpoint_key, today_str)
+        log(f"[fixture:{team}] actualizado: {len(data['proximos'])} proximos, {len(data['resultados'])} resultados")
     except Exception as e:
-        log(f"[boca] ERROR actualizando fixture: {type(e).__name__}: {e}")
+        log(f"[fixture:{team}] ERROR actualizando: {type(e).__name__}: {e}")
+
+
+def update_all_fixtures(sb, now_ms, force=False):
+    for team, team_url in TEAM_FIXTURES.items():
+        update_team_fixture(sb, now_ms, team, team_url, force=force)
 
 
 def main():
@@ -1070,14 +1085,14 @@ def main():
         log(f"ERROR: no se pudo obtener el access token de Gmail API: {type(e).__name__}: {e}")
         sys.exit(0)
 
-    # Widget de fixture de Boca (solo se actualiza los lunes; no-op el resto
-    # de los dias, salvo que se fuerce con BOCA_FORCE_UPDATE=1 para probar).
-    # Nunca debe frenar la corrida de mails si falla.
+    # Widgets de fixture de equipos (solo se actualizan los lunes; no-op el
+    # resto de los dias, salvo que se fuerce con BOCA_FORCE_UPDATE=1 para
+    # probar). Nunca debe frenar la corrida de mails si falla.
     try:
-        force_boca = (os.environ.get("BOCA_FORCE_UPDATE") or "").strip().lower() in ("1", "true", "yes")
-        update_boca_fixture(sb, now_ms, force=force_boca)
+        force_fixtures = (os.environ.get("BOCA_FORCE_UPDATE") or "").strip().lower() in ("1", "true", "yes")
+        update_all_fixtures(sb, now_ms, force=force_fixtures)
     except Exception as e:
-        log(f"[boca] ERROR inesperado: {type(e).__name__}: {e}")
+        log(f"[fixture] ERROR inesperado: {type(e).__name__}: {e}")
 
     try:
         cooldown_until = sb.get_meta("quota_cooldown_until")

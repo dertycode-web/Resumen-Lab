@@ -213,7 +213,7 @@
 
 <div id="bocaWidget" style="display:none;position:fixed;right:18px;bottom:18px;z-index:80;width:280px;font-size:12.5px;">
   <button id="bocaToggle" type="button" style="width:100%;text-align:left;border:1px solid var(--card-border);border-radius:12px;padding:9px 13px;background:var(--card-bg);box-shadow:var(--shadow-soft);cursor:pointer;font-size:13px;font-weight:700;color:var(--text-title);display:flex;align-items:center;justify-content:space-between;gap:8px;">
-    <span>⚽ Boca Juniors</span>
+    <span id="bocaToggleLabel">⚽ Equipo</span>
     <span id="bocaToggleIcon" style="color:var(--text-muted);font-size:11px;">▲</span>
   </button>
   <div id="bocaPanel" style="display:none;margin-top:7px;border:1px solid var(--card-border);border-radius:12px;background:var(--card-bg);box-shadow:var(--shadow-soft);padding:11px 13px;max-height:340px;overflow-y:auto;">
@@ -365,26 +365,42 @@
     setupBocaWidget(username);
   }
 
-  // ---- Widget de Boca Juniors: solo para 3 usuarios, desplegable cerrado
-  // por defecto, abajo a la derecha. Se actualiza sola una vez por semana
-  // (los lunes) desde el script de Python; ac solo se lee y se muestra. ----
-  var BOCA_ALLOWED_USERS = ["Alejandro_Bonnet", "Lautaro_Rojas", "Matias_Yance"];
+  // ---- Widget de fixture de equipo: solo para usuarios puntuales, cada uno
+  // con SU equipo asignado, desplegable cerrado por defecto, abajo a la
+  // derecha. Se actualiza solo una vez por semana (los lunes) desde el
+  // script de Python; aca solo se lee y se muestra. ----
+  var USER_TEAM_MAP = {
+    "Alejandro_Bonnet": "boca",
+    "Lautaro_Rojas": "boca",
+    "Matias_Yance": "boca",
+    "Debora_Castillo": "river",
+    "Agustin_Bustamante": "belgrano"
+  };
+  var TEAM_META = {
+    boca: { label: "Boca Juniors", icon: "⚽" },
+    river: { label: "River Plate", icon: "⚽" },
+    belgrano: { label: "Belgrano", icon: "⚽" }
+  };
   var bocaWidgetEl = document.getElementById("bocaWidget");
   var bocaToggleEl = document.getElementById("bocaToggle");
+  var bocaToggleLabelEl = document.getElementById("bocaToggleLabel");
   var bocaToggleIconEl = document.getElementById("bocaToggleIcon");
   var bocaPanelEl = document.getElementById("bocaPanel");
   var bocaContentEl = document.getElementById("bocaContent");
   var bocaLoaded = false;
 
   function setupBocaWidget(username) {
-    if (BOCA_ALLOWED_USERS.indexOf(username) === -1) {
+    var team = USER_TEAM_MAP[username];
+    if (!team) {
       bocaWidgetEl.style.display = "none";
       return;
     }
+    var meta = TEAM_META[team] || { label: team, icon: "⚽" };
+    bocaToggleLabelEl.textContent = meta.icon + " " + meta.label;
     bocaWidgetEl.style.display = "block";
     if (!bocaLoaded) {
       bocaLoaded = true;
-      loadBocaFixture();
+      loadBocaFixture(team);
     }
   }
 
@@ -409,9 +425,9 @@
     return "<span style='color:" + color + ";'>" + resultado + "</span>";
   }
 
-  function loadBocaFixture() {
+  function loadBocaFixture(team) {
     bocaContentEl.textContent = "Cargando…";
-    fetch(SUPABASE_URL + "/rest/v1/meta?key=eq.boca_fixture&select=value", { headers: authHeaders() })
+    fetch(SUPABASE_URL + "/rest/v1/meta?key=eq.fixture_" + encodeURIComponent(team) + "&select=value", { headers: authHeaders() })
       .then(function (r) { return r.json(); })
       .then(function (rows) {
         var data = rows && rows[0] && rows[0].value;
