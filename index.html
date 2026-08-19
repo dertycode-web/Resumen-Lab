@@ -419,7 +419,6 @@
   // Python) — controla el widget desplegable de partidos/resultados.
   var USER_TEAM_MAP = {
     "Alejandro_Bonnet": "boca",
-    "Lautaro_Rojas": "boca",
     "Matias_Yance": "boca",
     "Debora_Castillo": "river",
     "Agustin_Bustamante": "belgrano"
@@ -1136,7 +1135,7 @@
       card.style.cssText = "border:1px solid var(--card-border);border-radius:16px;padding:" + (big ? "24px 26px 25px" : "18px 20px 19px") + ";background:var(--card-bg);box-shadow:var(--shadow-soft);display:flex;flex-direction:column;" + (big ? "min-height:150px;" : "");
 
       var head = document.createElement("div");
-      head.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:10px;" + (hasItems ? "margin-bottom:" + (big ? "16px;" : "12px;") : "");
+      head.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:" + (big ? "16px;" : "12px;");
 
       var titleWrap = document.createElement("div");
       titleWrap.style.cssText = "display:flex;align-items:center;gap:" + (big ? "13px" : "10px") + ";min-width:0;";
@@ -1170,7 +1169,7 @@
         card.appendChild(list);
       } else {
         var empty = document.createElement("div");
-        empty.style.cssText = "font-size:14px;color:var(--text-muted);font-style:italic;";
+        empty.style.cssText = "font-size:14px;color:var(--text-muted);font-style:italic;border-top:1px solid var(--divider);margin-top:2px;padding-top:9px;";
         empty.textContent = "Sin novedades";
         card.appendChild(empty);
       }
@@ -1198,7 +1197,7 @@
       card.style.cssText = "border:1px solid var(--card-border);border-radius:16px;padding:18px 20px 19px;background:var(--card-bg);box-shadow:var(--shadow-soft);display:flex;flex-direction:column;";
 
       var head = document.createElement("div");
-      head.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:10px;" + (hasItems ? "margin-bottom:12px;" : "");
+      head.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;";
 
       var titleWrap = document.createElement("div");
       titleWrap.style.cssText = "display:flex;align-items:center;gap:10px;min-width:0;";
@@ -1247,7 +1246,7 @@
         card.appendChild(list);
       } else {
         var empty = document.createElement("div");
-        empty.style.cssText = "font-size:14px;color:var(--text-muted);font-style:italic;";
+        empty.style.cssText = "font-size:14px;color:var(--text-muted);font-style:italic;border-top:1px solid var(--divider);margin-top:2px;padding-top:9px;";
         empty.textContent = "Sin novedades";
         card.appendChild(empty);
       }
