@@ -219,21 +219,21 @@
   </div>
 
   <div id="rangePanel" style="display:none;border:1px solid var(--panel-border);border-radius:16px;padding:18px 22px;margin-bottom:26px;background:var(--panel-bg);box-shadow:var(--shadow-soft);">
-    <div style="font-size:14.5px;font-weight:600;margin-bottom:13px;color:var(--text-title);display:flex;align-items:center;gap:7px;">
+    <div style="font-size:14.5px;font-weight:600;margin-bottom:13px;color:var(--text-title);display:flex;align-items:center;justify-content:center;gap:7px;">
       <span style="font-size:15px;">🗓️</span> Pedir resumen de un rango puntual
     </div>
-    <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;">
-      <label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--label-color);font-weight:500;">
+    <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;justify-content:center;">
+      <label style="display:flex;flex-direction:column;align-items:center;gap:4px;font-size:13px;color:var(--label-color);font-weight:500;">
         Desde
         <input type="datetime-local" id="customFrom" style="height:40px;border:1px solid var(--input-border);border-radius:8px;padding:0 10px;font-size:14px;color:var(--input-text);background:var(--input-bg);">
       </label>
-      <label style="display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--label-color);font-weight:500;">
+      <label style="display:flex;flex-direction:column;align-items:center;gap:4px;font-size:13px;color:var(--label-color);font-weight:500;">
         Hasta
         <input type="datetime-local" id="customTo" style="height:40px;border:1px solid var(--input-border);border-radius:8px;padding:0 10px;font-size:14px;color:var(--input-text);background:var(--input-bg);">
       </label>
       <button id="customBtn" style="height:40px;border:1px solid var(--accent-border);border-radius:8px;padding:0 18px;font-size:14.5px;font-weight:600;background:var(--input-bg);color:var(--accent);cursor:pointer;">Generar resumen ↗</button>
     </div>
-    <div id="customMsg" style="font-size:13px;color:var(--text-muted);margin-top:9px;"></div>
+    <div id="customMsg" style="font-size:13px;color:var(--text-muted);margin-top:9px;text-align:center;"></div>
   </div>
 
   <div id="statusBanners"></div>
