@@ -1052,16 +1052,22 @@
       curEl = null; nextEl = null; nextTabKey = null; dir = null; dx = 0;
     }
 
-    // Ademas del contenedor de tarjetas, escuchamos tambien sobre la franja
-    // de banners de estado (hermana de tabContentWrap, no esta adentro). El
-    // panel de busqueda de "Resumen por lapso" ahora vive DENTRO de
-    // tabContentWrap (como parte del panel de esa pestaña), asi que ya
-    // queda cubierto sin hace falta agregarlo aparte.
-    var swipeSurfaces = [document.getElementById("statusBanners"), tabContentWrapEl].filter(Boolean);
+    // Escuchamos sobre TODO el documento (no solo el contenedor de
+    // tarjetas), asi el gesto se puede arrancar desde cualquier parte de
+    // abajo del menu — incluido el espacio vacio de mas abajo cuando el
+    // contenido de la pestaña actual es corto/vacio (ej. "Resumen por
+    // lapso" sin rango elegido todavia), que antes quedaba fuera del area
+    // "clickeable" del swipe porque el contenedor solo mide lo que ocupa su
+    // contenido real. Se descarta el gesto si arranca sobre el menu de
+    // pestañas o el menu de usuario (para no pisarles su propio click), o
+    // si el usuario todavia no inicio sesion.
+    var swipeSurfaces = [document];
 
     swipeSurfaces.forEach(function (surfaceEl) {
       surfaceEl.addEventListener("touchstart", function (e) {
+        if (appRootEl.style.display === "none") return;
         if (e.touches.length !== 1) return;
+        if (e.target.closest && (e.target.closest("#tabBar") || e.target.closest("#userMenu"))) return;
         startX = e.touches[0].clientX;
         startY = e.touches[0].clientY;
         decided = false;
