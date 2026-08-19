@@ -476,7 +476,14 @@ def classify(msg, body):
         }
 
     # 2. Afectaciones masivas
-    if sender_addr == AFECTACION_MASIVA_SENDER:
+    #
+    # No solo el remitente automatico (argentinaafectacionmasiva@claro.com.ar):
+    # tambien vale cualquier mail dirigido (To/Cc) a la casilla de clientes
+    # (AFECTACION_MASIVA_CLIENTES_ADDR), aunque lo mande una persona real de
+    # Claro a mano (ej. yesica.maciel@claro.com.ar) en vez del sistema
+    # automatico. Antes esto solo se usaba para "afectacionMasivaLapso"
+    # (regla 8 mas abajo) y esos mails no aparecian en la solapa Resumen.
+    if sender_addr == AFECTACION_MASIVA_SENDER or AFECTACION_MASIVA_CLIENTES_ADDR in recipients_text:
         categories.append("afectacionMasiva")
         closure_detected = bool(CLOSURE_RE.search(subject) or CLOSURE_RE.search(body))
 
