@@ -320,7 +320,7 @@
 
   <div id="statusBanners"></div>
 
-  <div id="tabContentWrap" style="position:relative;overflow-x:hidden;touch-action:pan-y;overscroll-behavior-x:contain;">
+  <div id="tabContentWrap" style="position:relative;touch-action:pan-y;overscroll-behavior-x:contain;">
     <div id="cards" style="display:grid;grid-template-columns:1fr 1fr;gap:18px;"></div>
     <div id="cardsPendientes" style="display:none;grid-template-columns:1fr;gap:18px;"></div>
     <div id="cardsEscIT" style="display:none;grid-template-columns:1fr;gap:18px;"></div>
@@ -1178,6 +1178,7 @@
         clearDragStyles(localCur);
         clearDragStyles(localNext);
         tabContentWrapEl.style.height = "";
+        tabContentWrapEl.style.overflowX = "";
         if (commit) currentTab = localNextTab;
         applyTabStyles();
       }, 230);
@@ -1244,6 +1245,11 @@
         // primera (que siempre tiene contenido cargado desde el arranque).
         var measuredH = Math.max(curEl.offsetHeight, nextEl.offsetHeight, tabContentWrapEl.offsetHeight, 120);
         tabContentWrapEl.style.height = measuredH + "px";
+        // overflow-x:hidden solo mientras se arrastra (para tapar el panel
+        // vecino que se desliza al lado) — dejarlo puesto todo el tiempo
+        // recortaba el borde derecho de las tarjetas por un problema de
+        // redondeo de subpixeles del grid en algunos anchos de pantalla.
+        tabContentWrapEl.style.overflowX = "hidden";
         curEl.style.position = "absolute";
         curEl.style.top = "0"; curEl.style.left = "0"; curEl.style.width = "100%";
         nextEl.style.position = "absolute";
