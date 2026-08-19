@@ -1085,7 +1085,13 @@
         curEl = tabContentEl(currentTab);
         nextEl = tabContentEl(nextTabKey);
         wrapWidth = tabContentWrapEl.clientWidth;
-        tabContentWrapEl.style.height = curEl.offsetHeight + "px";
+        // Altura minima de resguardo: si la pestaña actual (ej. "Resumen por
+        // lapso" sin rango elegido todavia) esta vacia, su offsetHeight da
+        // 0px y el wrap se colapsaba a 0 durante el arrastre — hacia parecer
+        // que el swipe "no funcionaba" en cualquier pestaña que no fuera la
+        // primera (que siempre tiene contenido cargado desde el arranque).
+        var measuredH = Math.max(curEl.offsetHeight, nextEl.offsetHeight, tabContentWrapEl.offsetHeight, 120);
+        tabContentWrapEl.style.height = measuredH + "px";
         curEl.style.position = "absolute";
         curEl.style.top = "0"; curEl.style.left = "0"; curEl.style.width = "100%";
         nextEl.style.position = "absolute";
