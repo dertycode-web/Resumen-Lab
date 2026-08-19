@@ -264,7 +264,7 @@
     </div>
     <div id="rangeControls" style="display:flex;align-items:center;gap:9px;flex-shrink:0;">
       <div id="userMenu" style="position:relative;flex-shrink:0;">
-        <button id="userMenuBtn" title="Cuenta" style="display:none;width:44px;height:44px;border-radius:999px;border:1px solid var(--toggle-border);background:var(--toggle-bg);cursor:pointer;font-size:22px;align-items:center;justify-content:center;box-shadow:var(--shadow-soft);"></button>
+        <button id="userMenuBtn" title="Cuenta" style="display:none;width:44px;height:44px;border-radius:999px;border:1px solid var(--toggle-border);background:var(--toggle-bg);cursor:pointer;font-size:22px;align-items:center;justify-content:center;box-shadow:var(--shadow-soft);overflow:hidden;padding:0;"></button>
         <div id="userMenuDropdown" style="display:none;position:absolute;right:0;top:52px;min-width:190px;border:1px solid var(--panel-border);border-radius:var(--radius-sm);background:var(--panel-bg);box-shadow:var(--shadow-card-hover);padding:8px;z-index:50;">
           <div id="userMenuName" style="font-size:13.5px;font-weight:600;color:var(--text-title);padding:8px 10px;border-bottom:1px solid var(--panel-border);margin-bottom:4px;"></div>
           <button id="themeMenuItem" type="button" style="width:100%;text-align:left;border:none;background:none;padding:9px 10px;border-radius:10px;font-size:13.5px;color:var(--text-secondary);cursor:pointer;display:flex;align-items:center;gap:8px;">🌙 Modo oscuro</button>
@@ -437,6 +437,13 @@
     "Debora_Castillo": "💀",
     "Luciana_Gonzalez": "👩‍🌾"
   };
+  // Avatar personalizado (imagen) para el icono circular del menu de
+  // usuario, en vez del emoji generico. Si el usuario no esta aca, se usa
+  // USERNAME_EMOJI como siempre.
+  var USERNAME_AVATAR_IMG = {
+    "Alejandro_Bonnet": "assets/avatar-alejandro-bonnet.png"
+  };
+
   function displayNameFor(username) {
     var base = username ? username.replace(/_/g, " ") : "";
     var emoji = USERNAME_EMOJI[username];
@@ -501,7 +508,17 @@
       mascotWidgetEl.src = mascotTeam ? ("assets/mascot-" + mascotTeam + ".png") : "assets/mascot.png";
     }
     userMenuBtnEl.style.display = "flex";
-    userMenuBtnEl.textContent = USERNAME_EMOJI[username] || "👤";
+    var avatarImg = USERNAME_AVATAR_IMG[username];
+    if (avatarImg) {
+      userMenuBtnEl.innerHTML = "";
+      var avatarEl = document.createElement("img");
+      avatarEl.src = avatarImg;
+      avatarEl.alt = username;
+      avatarEl.style.cssText = "width:100%;height:100%;object-fit:cover;border-radius:999px;";
+      userMenuBtnEl.appendChild(avatarEl);
+    } else {
+      userMenuBtnEl.textContent = USERNAME_EMOJI[username] || "👤";
+    }
     userMenuNameEl.textContent = displayNameFor(username);
     if (!appBootstrapped) {
       appBootstrapped = true;
