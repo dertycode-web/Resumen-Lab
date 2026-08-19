@@ -124,6 +124,8 @@
     padding: 7px 10px;
   }
   .rl-bottomnav-tab {
+    position: relative;
+    z-index: 1;
     border: none; background: none; cursor: pointer;
     padding: 9px 18px;
     font-size: 12.5px; font-weight: 600;
@@ -133,6 +135,19 @@
     border-radius: 999px;
   }
   .rl-bottomnav-tab .rl-tab-icon { width: 17px; height: 17px; }
+  /* Pildora indicadora que se desliza detras del item activo — se mueve
+     sola (transition) al clickear una pestaña, y se sigue "a mano" con el
+     dedo (sin transition, recalculada en cada touchmove) durante un swipe. */
+  #navIndicator {
+    position: absolute;
+    top: 0; left: 0;
+    width: 0; height: 0;
+    background: var(--text-title);
+    border-radius: 999px;
+    z-index: 0;
+    pointer-events: none;
+    transition: left .22s ease, width .22s ease, top .22s ease, height .22s ease;
+  }
   @keyframes rlSlideFromRight {
     from { transform: translateX(28px); opacity: 0; }
     to { transform: translateX(0); opacity: 1; }
@@ -173,6 +188,8 @@
       gap: 2px;
     }
     .rl-bottomnav-tab {
+      position: relative;
+      z-index: 1;
       flex: 1 1 0; min-width: 0;
       border: none; background: none; cursor: pointer;
       padding: 6px 2px;
@@ -301,6 +318,7 @@
        ya cableados en JS sin codigo extra. Solo se muestra en mobile
        (ver @media mas arriba), reemplazando visualmente a #tabBar. -->
   <div id="bottomNav">
+    <div id="navIndicator"></div>
     <button class="rl-tab rl-bottomnav-tab" data-tab="resumen">
       <svg class="rl-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
       <span>Resumen</span>
@@ -1062,7 +1080,28 @@
   var lapsoPanelEl = document.getElementById("lapsoPanel");
   var tabContentWrapEl = document.getElementById("tabContentWrap");
   var tabButtons = document.querySelectorAll(".rl-tab");
+  var bottomNavEl = document.getElementById("bottomNav");
+  var navIndicatorEl = document.getElementById("navIndicator");
   var currentTab = "resumen";
+
+  function getBottomNavBtn(tab) {
+    return bottomNavEl.querySelector('.rl-bottomnav-tab[data-tab="' + tab + '"]');
+  }
+
+  // Posiciona la pildora indicadora detras del boton activo de la barra de
+  // abajo. Con transicion cuando el cambio de pestaña fue por click/commit
+  // (se desliza sola), sin transicion cuando se llama en cada touchmove de
+  // un swipe (se "pega" al dedo, se recalcula muchas veces por segundo).
+  function setNavIndicatorTo(btn, withTransition) {
+    if (!btn || !navIndicatorEl) return;
+    navIndicatorEl.style.transition = withTransition
+      ? "left .22s ease, width .22s ease, top .22s ease, height .22s ease"
+      : "none";
+    navIndicatorEl.style.left = btn.offsetLeft + "px";
+    navIndicatorEl.style.top = btn.offsetTop + "px";
+    navIndicatorEl.style.width = btn.offsetWidth + "px";
+    navIndicatorEl.style.height = btn.offsetHeight + "px";
+  }
   var currentLapsoRange = null; // { fromMs, toMs } una vez que se genera
 
   // Orden de las pestañas, en el mismo orden en que aparecen en el menu —
@@ -1086,15 +1125,15 @@
     tabButtons.forEach(function (btn) {
       var active = btn.getAttribute("data-tab") === currentTab;
       if (btn.classList.contains("rl-bottomnav-tab")) {
-        // Pestañas de la barra flotante de abajo: indicador activo tipo
-        // pildora negra (o blanca en modo oscuro) en vez de color de acento.
-        btn.style.background = active ? "var(--text-title)" : "transparent";
+        // Pestañas de la barra flotante de abajo: el fondo de "activo" ya no
+        // lo pinta el boton — lo pone #navIndicator, que se desliza detras.
         btn.style.color = active ? "var(--shell-bg)" : "var(--text-secondary)";
       } else {
         btn.style.color = active ? "var(--accent)" : "var(--text-secondary)";
         btn.style.borderBottomColor = active ? "var(--accent)" : "transparent";
       }
     });
+    setNavIndicatorTo(getBottomNavBtn(currentTab), true);
     var isResumen = currentTab === "resumen";
     var isEscIT = currentTab === "escalamientosIT";
     var isLapso = currentTab === "lapso";
@@ -1269,6 +1308,22 @@
       var sign = dir === "next" ? 1 : -1;
       curEl.style.transform = "translateX(" + dx + "px)";
       nextEl.style.transform = "translateX(" + (dx + sign * wrapWidth) + "px)";
+
+      // La pildora de la barra de abajo tambien va "a mano" con el dedo:
+      // interpola su posicion/ancho entre el boton actual y el de destino
+      // segun cuanto se arrastro.
+      var fromBtn = getBottomNavBtn(currentTab);
+      var toBtn = getBottomNavBtn(nextTabKey);
+      if (fromBtn && toBtn) {
+        var progress = Math.min(Math.abs(dx) / wrapWidth, 1);
+        var fl = fromBtn.offsetLeft, fw = fromBtn.offsetWidth, ft = fromBtn.offsetTop, fh = fromBtn.offsetHeight;
+        var tl = toBtn.offsetLeft, tw = toBtn.offsetWidth, tt = toBtn.offsetTop, th = toBtn.offsetHeight;
+        navIndicatorEl.style.transition = "none";
+        navIndicatorEl.style.left = (fl + (tl - fl) * progress) + "px";
+        navIndicatorEl.style.top = (ft + (tt - ft) * progress) + "px";
+        navIndicatorEl.style.width = (fw + (tw - fw) * progress) + "px";
+        navIndicatorEl.style.height = (fh + (th - fh) * progress) + "px";
+      }
       }, { passive: false });
     });
 
