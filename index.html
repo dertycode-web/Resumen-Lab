@@ -121,7 +121,7 @@
     #appRoot { border-radius: 24px !important; padding: 18px 16px 26px !important; }
     #appHeader { flex-wrap: nowrap; align-items: center; gap: 8px !important; }
     .rl-header-left { gap: 10px !important; }
-    .rl-logo-icon { height: 34px !important; border-radius: 10px !important; }
+    .rl-logo-icon { height: 44px !important; }
     .rl-range-line { font-size: 11.5px !important; line-height: 1.35; }
     #userMenuBtn { width: 38px !important; height: 38px !important; font-size: 17px !important; }
     /* La barra de pestañas de arriba se reemplaza por #bottomNav fija abajo
@@ -130,28 +130,28 @@
     #bottomNav {
       display: flex;
       position: fixed;
-      left: 50%; bottom: calc(14px + env(safe-area-inset-bottom, 0px));
-      transform: translateX(-50%);
-      width: min(94vw, 360px);
+      left: 0; right: 0; bottom: 0;
       z-index: 60;
-      background: var(--shell-bg);
-      border: 1px solid var(--card-border);
-      border-radius: 999px;
-      box-shadow: var(--shadow-card-hover);
-      padding: 5px;
+      background: color-mix(in srgb, var(--shell-bg) 88%, transparent);
+      -webkit-backdrop-filter: blur(14px);
+      backdrop-filter: blur(14px);
+      border-top: 1px solid var(--card-border);
+      border-radius: 20px 20px 0 0;
+      box-shadow: 0 -6px 20px rgba(0,0,0,0.06);
+      padding: 8px 4px calc(6px + env(safe-area-inset-bottom, 0px));
       gap: 2px;
     }
     .rl-bottomnav-tab {
       flex: 1 1 0; min-width: 0;
       border: none; background: none; cursor: pointer;
-      padding: 7px 2px;
+      padding: 6px 2px;
       font-size: 9.5px; font-weight: 600;
       color: var(--text-secondary);
-      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
       white-space: normal; text-align: center; line-height: 1.1;
-      border-radius: 999px;
+      border-radius: 12px;
     }
-    .rl-bottomnav-tab .rl-tab-icon { width: 18px; height: 18px; }
+    .rl-bottomnav-tab .rl-tab-icon { width: 19px; height: 19px; }
     #cards { grid-template-columns: 1fr !important; }
     #rangePanel { padding: 16px !important; }
     #bocaWidget { width: min(260px, calc(100vw - 28px)) !important; right: 14px !important; }
@@ -166,9 +166,7 @@
 
 <div id="authRoot" style="max-width:420px;margin:70px auto;display:none;">
   <div style="text-align:center;margin-bottom:26px;">
-    <div style="height:64px;border-radius:16px;background:#0c0c10;display:inline-flex;align-items:center;overflow:hidden;">
-      <img src="assets/logo-reportes-tecnica.png" alt="Reportes Técnica" style="height:100%;width:auto;display:block;">
-    </div>
+    <img src="assets/logo-reportes-tecnica.png" alt="Reportes Técnica" style="height:88px;width:auto;display:inline-block;">
   </div>
 
   <div style="border:1px solid var(--panel-border);border-radius:22px;padding:26px 26px 22px;background:var(--panel-bg);box-shadow:var(--shadow-soft);">
@@ -228,9 +226,7 @@
 
   <div id="appHeader" style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:26px;">
     <div class="rl-header-left" style="display:flex;align-items:center;gap:14px;min-width:0;">
-      <div class="rl-logo-icon" style="height:46px;border-radius:13px;background:#0c0c10;overflow:hidden;display:flex;align-items:center;flex-shrink:0;">
-        <img src="assets/logo-reportes-tecnica.png" alt="Reportes Técnica" style="height:100%;width:auto;display:block;">
-      </div>
+      <img class="rl-logo-icon" src="assets/logo-reportes-tecnica.png" alt="Reportes Técnica" style="height:68px;width:auto;display:block;flex-shrink:0;">
       <div class="rl-header-text" style="min-width:0;">
         <div id="rangeLine" class="rl-range-line" style="font-size:14px;color:var(--text-secondary);margin-top:3px;"></div>
         <div id="rangeLineEscIT" class="rl-range-line" style="display:none;font-size:14px;color:var(--text-secondary);margin-top:3px;"></div>
