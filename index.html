@@ -1385,7 +1385,7 @@
     mainLine.style.cssText = "display:flex;align-items:flex-start;gap:6px;justify-content:space-between;";
 
     var textSpan = document.createElement("span");
-    textSpan.style.cssText = "flex:1;min-width:0;";
+    textSpan.style.cssText = "flex:1;min-width:0;overflow-wrap:break-word;word-break:break-word;";
     textSpan.innerHTML = check + "- " + (item.subject || "(sin asunto)") + age;
     mainLine.appendChild(textSpan);
 
@@ -1462,7 +1462,7 @@
 
       var card = document.createElement("div");
       card.className = "rl-card";
-      card.style.cssText = "border:1px solid var(--card-border);border-radius:22px;padding:" + (big ? "24px 26px 25px" : "18px 20px 19px") + ";background:var(--card-bg);box-shadow:var(--shadow-soft);display:flex;flex-direction:column;" + (big ? "min-height:150px;" : "");
+      card.style.cssText = "border:1px solid var(--card-border);border-radius:22px;padding:" + (big ? "24px 26px 25px" : "18px 20px 19px") + ";background:var(--card-bg);box-shadow:var(--shadow-soft);display:flex;flex-direction:column;min-width:0;box-sizing:border-box;" + (big ? "min-height:150px;" : "");
 
       var head = document.createElement("div");
       head.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:" + (big ? "16px;" : "12px;");
@@ -1524,7 +1524,7 @@
 
       var card = document.createElement("div");
       card.className = "rl-card";
-      card.style.cssText = "border:1px solid var(--card-border);border-radius:22px;padding:18px 20px 19px;background:var(--card-bg);box-shadow:var(--shadow-soft);display:flex;flex-direction:column;";
+      card.style.cssText = "border:1px solid var(--card-border);border-radius:22px;padding:18px 20px 19px;background:var(--card-bg);box-shadow:var(--shadow-soft);display:flex;flex-direction:column;min-width:0;box-sizing:border-box;";
 
       var head = document.createElement("div");
       head.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;";
@@ -1666,7 +1666,7 @@
     cardsPendientesEl.innerHTML = "";
     var card = document.createElement("div");
     card.className = "rl-card";
-    card.style.cssText = "border:1px solid var(--card-border);border-radius:22px;padding:18px 20px 19px;background:var(--card-bg);box-shadow:var(--shadow-soft);";
+    card.style.cssText = "border:1px solid var(--card-border);border-radius:22px;padding:18px 20px 19px;background:var(--card-bg);box-shadow:var(--shadow-soft);min-width:0;box-sizing:border-box;";
 
     if (!rows.length) {
       var empty = document.createElement("div");
@@ -1685,7 +1685,7 @@
       var textWrap = document.createElement("div");
       textWrap.style.cssText = "flex:1;min-width:0;";
       var subjectLine = document.createElement("div");
-      subjectLine.style.cssText = "color:var(--text-primary);";
+      subjectLine.style.cssText = "color:var(--text-primary);overflow-wrap:break-word;word-break:break-word;";
       subjectLine.textContent = "- " + (p.subject || "(sin asunto)");
       var metaLine = document.createElement("div");
       metaLine.style.cssText = "font-size:12.5px;color:var(--text-muted);margin-top:2px;";
