@@ -251,10 +251,12 @@
 
   <div id="statusBanners"></div>
 
-  <div id="cards" style="display:grid;grid-template-columns:1fr 1fr;gap:18px;"></div>
-  <div id="cardsPendientes" style="display:none;grid-template-columns:1fr;gap:18px;"></div>
-  <div id="cardsEscIT" style="display:none;grid-template-columns:1fr;gap:18px;"></div>
-  <div id="cardsLapso" style="display:none;grid-template-columns:1fr;gap:18px;"></div>
+  <div id="tabContentWrap" style="position:relative;overflow-x:hidden;touch-action:pan-y;overscroll-behavior-x:contain;">
+    <div id="cards" style="display:grid;grid-template-columns:1fr 1fr;gap:18px;"></div>
+    <div id="cardsPendientes" style="display:none;grid-template-columns:1fr;gap:18px;"></div>
+    <div id="cardsEscIT" style="display:none;grid-template-columns:1fr;gap:18px;"></div>
+    <div id="cardsLapso" style="display:none;grid-template-columns:1fr;gap:18px;"></div>
+  </div>
 
 </div>
 
@@ -926,6 +928,7 @@
   var rangeLinePendientesEl = document.getElementById("rangeLinePendientes");
   var cardsPendientesEl = document.getElementById("cardsPendientes");
   var rangePanelEl = document.getElementById("rangePanel");
+  var tabContentWrapEl = document.getElementById("tabContentWrap");
   var tabButtons = document.querySelectorAll(".rl-tab");
   var currentTab = "resumen";
   var currentLapsoRange = null; // { fromMs, toMs } una vez que se genera
@@ -1000,38 +1003,115 @@
     });
   });
 
-  // ---- Swipe horizontal (mobile) para pasar a la pestaña siguiente/
-  // anterior, con la mismita animacion de deslizamiento que da clickear una
-  // pestaña. Se escucha en appRoot pero se ignora si el gesto arranco sobre
-  // algo que ya tiene su propio scroll horizontal (el menu de pestañas) o
-  // vertical (el contenido de una tarjeta), para no pisarle el gesto nativo.
+  // ---- Swipe horizontal (mobile) tipo Instagram: el contenido sigue al
+  // dedo en tiempo real (la pestaña actual se corre y la siguiente va
+  // apareciendo desde el borde), y al soltar se completa el cambio o se
+  // vuelve a la posicion original segun cuanto se arrastro. Se usa
+  // preventDefault() en touchmove (listener NO pasivo) apenas se detecta
+  // que el gesto es horizontal, para evitar que el navegador interprete el
+  // swipe como "volver atras".
   (function setupSwipeNav() {
-    var startX = null, startY = null, startedOnTabBar = false;
-    var SWIPE_THRESHOLD = 55;
+    var startX = null, startY = null, dragging = false, decided = false;
+    var dx = 0, wrapWidth = 0;
+    var curEl = null, nextEl = null, nextTabKey = null, dir = null;
+    var DRAG_MIN = 8; // px minimos antes de decidir si es horizontal o vertical
 
-    appRootEl.addEventListener("touchstart", function (e) {
+    function clearDragStyles(el) {
+      if (!el) return;
+      el.style.transition = "";
+      el.style.transform = "";
+      el.style.position = "";
+      el.style.top = "";
+      el.style.left = "";
+      el.style.width = "";
+    }
+
+    function endDrag(commit) {
+      if (!dragging) { startX = null; return; }
+      var finalCur = commit ? (dir === "next" ? -wrapWidth : wrapWidth) : 0;
+      var finalNext = commit ? 0 : (dir === "next" ? wrapWidth : -wrapWidth);
+      curEl.style.transition = "transform .22s ease-out";
+      nextEl.style.transition = "transform .22s ease-out";
+      curEl.style.transform = "translateX(" + finalCur + "px)";
+      nextEl.style.transform = "translateX(" + finalNext + "px)";
+      var localCur = curEl, localNext = nextEl, localNextTab = nextTabKey;
+      setTimeout(function () {
+        clearDragStyles(localCur);
+        clearDragStyles(localNext);
+        tabContentWrapEl.style.height = "";
+        if (commit) currentTab = localNextTab;
+        applyTabStyles();
+      }, 230);
+      startX = null; startY = null; dragging = false; decided = false;
+      curEl = null; nextEl = null; nextTabKey = null; dir = null; dx = 0;
+    }
+
+    tabContentWrapEl.addEventListener("touchstart", function (e) {
       if (e.touches.length !== 1) return;
       startX = e.touches[0].clientX;
       startY = e.touches[0].clientY;
-      startedOnTabBar = !!e.target.closest("#tabBar");
+      decided = false;
+      dragging = false;
+      dx = 0;
     }, { passive: true });
 
-    appRootEl.addEventListener("touchend", function (e) {
-      if (startX === null || startedOnTabBar) { startX = null; return; }
-      var endX = (e.changedTouches && e.changedTouches[0].clientX) || startX;
-      var endY = (e.changedTouches && e.changedTouches[0].clientY) || startY;
-      var dx = endX - startX;
-      var dy = endY - startY;
-      startX = null;
-      if (Math.abs(dx) < SWIPE_THRESHOLD || Math.abs(dx) < Math.abs(dy) * 1.3) return;
+    tabContentWrapEl.addEventListener("touchmove", function (e) {
+      if (startX === null) return;
+      var x = e.touches[0].clientX, y = e.touches[0].clientY;
+      var ddx = x - startX, ddy = y - startY;
 
-      var idx = TAB_ORDER.indexOf(currentTab);
-      if (idx === -1) return;
-      if (dx < 0 && idx < TAB_ORDER.length - 1) {
-        goToTab(TAB_ORDER[idx + 1], "next");
-      } else if (dx > 0 && idx > 0) {
-        goToTab(TAB_ORDER[idx - 1], "prev");
+      if (!decided) {
+        if (Math.abs(ddx) < DRAG_MIN && Math.abs(ddy) < DRAG_MIN) return;
+        decided = true;
+        if (Math.abs(ddx) < Math.abs(ddy) * 1.2) {
+          // Gesto vertical (scroll normal): no hacemos nada, dejamos que
+          // el navegador scrollee la pagina como siempre.
+          startX = null;
+          return;
+        }
+        var idx = TAB_ORDER.indexOf(currentTab);
+        dir = ddx < 0 ? "next" : "prev";
+        var targetIdx = dir === "next" ? idx + 1 : idx - 1;
+        if (idx === -1 || targetIdx < 0 || targetIdx >= TAB_ORDER.length) {
+          // Estamos en el borde (primera o ultima pestaña): no hay a donde
+          // deslizar en esa direccion.
+          startX = null;
+          return;
+        }
+        nextTabKey = TAB_ORDER[targetIdx];
+        curEl = tabContentEl(currentTab);
+        nextEl = tabContentEl(nextTabKey);
+        wrapWidth = tabContentWrapEl.clientWidth;
+        tabContentWrapEl.style.height = curEl.offsetHeight + "px";
+        curEl.style.position = "absolute";
+        curEl.style.top = "0"; curEl.style.left = "0"; curEl.style.width = "100%";
+        nextEl.style.position = "absolute";
+        nextEl.style.top = "0"; nextEl.style.left = "0"; nextEl.style.width = "100%";
+        nextEl.style.display = "grid";
+        dragging = true;
       }
+
+      if (!dragging) return;
+      // Gesto horizontal confirmado: evitamos que el navegador lo tome como
+      // "volver atras" o como scroll de pagina.
+      e.preventDefault();
+      dx = ddx;
+      if (dx > wrapWidth) dx = wrapWidth;
+      if (dx < -wrapWidth) dx = -wrapWidth;
+      var sign = dir === "next" ? 1 : -1;
+      curEl.style.transform = "translateX(" + dx + "px)";
+      nextEl.style.transform = "translateX(" + (dx + sign * wrapWidth) + "px)";
+    }, { passive: false });
+
+    tabContentWrapEl.addEventListener("touchend", function () {
+      if (!dragging) { startX = null; return; }
+      var commit = Math.abs(dx) > wrapWidth * 0.3;
+      endDrag(commit);
+    }, { passive: true });
+
+    tabContentWrapEl.addEventListener("touchcancel", function () {
+      if (!dragging) { startX = null; return; }
+      endDrag(false);
     }, { passive: true });
   })();
 
