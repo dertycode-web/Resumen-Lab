@@ -395,9 +395,13 @@
     currentUsername = username;
     authRootEl.style.display = "none";
     appRootEl.style.display = "block";
-    mascotWidgetEl.style.display = "block";
-    var mascotTeam = MASCOT_TEAM_MAP[username];
-    mascotWidgetEl.src = mascotTeam ? ("assets/mascot-" + mascotTeam + ".png") : "assets/mascot.png";
+    if (MASCOT_DISABLED_USERS.indexOf(username) !== -1) {
+      mascotWidgetEl.style.display = "none";
+    } else {
+      mascotWidgetEl.style.display = "block";
+      var mascotTeam = MASCOT_TEAM_MAP[username];
+      mascotWidgetEl.src = mascotTeam ? ("assets/mascot-" + mascotTeam + ".png") : "assets/mascot.png";
+    }
     userMenuBtnEl.style.display = "flex";
     userMenuBtnEl.textContent = USERNAME_EMOJI[username] || "👤";
     userMenuNameEl.textContent = displayNameFor(username);
@@ -431,6 +435,8 @@
   var MASCOT_TEAM_MAP = Object.assign({}, USER_TEAM_MAP, {
     "Ignacio_Suarez": "voley"
   });
+  // Usuarios que no quieren la mascota flotante (ni la generica ni de equipo).
+  var MASCOT_DISABLED_USERS = ["Lautaro_Rojas"];
   var bocaWidgetEl = document.getElementById("bocaWidget");
   var bocaToggleEl = document.getElementById("bocaToggle");
   var bocaToggleLabelEl = document.getElementById("bocaToggleLabel");
