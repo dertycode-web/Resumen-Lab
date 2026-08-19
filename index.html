@@ -94,6 +94,16 @@
   .rl-tab-icon { width: 15px; height: 15px; flex-shrink: 0; }
   #tabBar { overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
   #tabBar::-webkit-scrollbar { display: none; }
+  @keyframes rlSlideFromRight {
+    from { transform: translateX(28px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+  @keyframes rlSlideFromLeft {
+    from { transform: translateX(-28px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+  .rl-slide-from-right { animation: rlSlideFromRight .22s ease-out; }
+  .rl-slide-from-left { animation: rlSlideFromLeft .22s ease-out; }
 
   /* ---- Mobile ---- */
   @media (max-width: 720px) {
@@ -920,7 +930,21 @@
   var currentTab = "resumen";
   var currentLapsoRange = null; // { fromMs, toMs } una vez que se genera
 
-  function applyTabStyles() {
+  // Orden de las pestañas, en el mismo orden en que aparecen en el menu —
+  // se usa tanto para saber que animacion de deslizamiento mostrar (hacia
+  // donde "viene" el contenido nuevo) como para el gesto de swipe en mobile
+  // (deslizar a la pestaña siguiente/anterior).
+  var TAB_ORDER = ["resumen", "lapso", "pendientes", "escalamientosIT"];
+
+  function tabContentEl(tab) {
+    if (tab === "resumen") return cardsEl;
+    if (tab === "escalamientosIT") return cardsEscITEl;
+    if (tab === "lapso") return cardsLapsoEl;
+    if (tab === "pendientes") return cardsPendientesEl;
+    return null;
+  }
+
+  function applyTabStyles(direction) {
     tabButtons.forEach(function (btn) {
       var active = btn.getAttribute("data-tab") === currentTab;
       btn.style.color = active ? "var(--accent)" : "var(--text-secondary)";
@@ -946,14 +970,70 @@
     if (isEscIT) renderEscalamientosIT();
     if (isLapso) rerenderLapso();
     if (isPendientes) refreshPendientes();
+
+    if (direction) {
+      var activeEl = tabContentEl(currentTab);
+      if (activeEl) {
+        activeEl.classList.remove("rl-slide-from-right", "rl-slide-from-left");
+        // Forzar reflow para poder re-disparar la animacion aunque sea la
+        // misma clase que la vez anterior.
+        void activeEl.offsetWidth;
+        activeEl.classList.add(direction === "next" ? "rl-slide-from-right" : "rl-slide-from-left");
+      }
+    }
+  }
+
+  function goToTab(tab, direction) {
+    if (tab === currentTab) return;
+    if (!direction) {
+      var oldIdx = TAB_ORDER.indexOf(currentTab);
+      var newIdx = TAB_ORDER.indexOf(tab);
+      if (oldIdx !== -1 && newIdx !== -1) direction = newIdx > oldIdx ? "next" : "prev";
+    }
+    currentTab = tab;
+    applyTabStyles(direction);
   }
 
   tabButtons.forEach(function (btn) {
     btn.addEventListener("click", function () {
-      currentTab = btn.getAttribute("data-tab");
-      applyTabStyles();
+      goToTab(btn.getAttribute("data-tab"));
     });
   });
+
+  // ---- Swipe horizontal (mobile) para pasar a la pestaña siguiente/
+  // anterior, con la mismita animacion de deslizamiento que da clickear una
+  // pestaña. Se escucha en appRoot pero se ignora si el gesto arranco sobre
+  // algo que ya tiene su propio scroll horizontal (el menu de pestañas) o
+  // vertical (el contenido de una tarjeta), para no pisarle el gesto nativo.
+  (function setupSwipeNav() {
+    var startX = null, startY = null, startedOnTabBar = false;
+    var SWIPE_THRESHOLD = 55;
+
+    appRootEl.addEventListener("touchstart", function (e) {
+      if (e.touches.length !== 1) return;
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+      startedOnTabBar = !!e.target.closest("#tabBar");
+    }, { passive: true });
+
+    appRootEl.addEventListener("touchend", function (e) {
+      if (startX === null || startedOnTabBar) { startX = null; return; }
+      var endX = (e.changedTouches && e.changedTouches[0].clientX) || startX;
+      var endY = (e.changedTouches && e.changedTouches[0].clientY) || startY;
+      var dx = endX - startX;
+      var dy = endY - startY;
+      startX = null;
+      if (Math.abs(dx) < SWIPE_THRESHOLD || Math.abs(dx) < Math.abs(dy) * 1.3) return;
+
+      var idx = TAB_ORDER.indexOf(currentTab);
+      if (idx === -1) return;
+      if (dx < 0 && idx < TAB_ORDER.length - 1) {
+        goToTab(TAB_ORDER[idx + 1], "next");
+      } else if (dx > 0 && idx > 0) {
+        goToTab(TAB_ORDER[idx - 1], "prev");
+      }
+    }, { passive: true });
+  })();
 
   var currentRange = null; // { fromMs, toMs, label, mailCount }
 
