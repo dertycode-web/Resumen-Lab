@@ -32,6 +32,15 @@ on:
           Dejar vacio en corridas normales.
         required: false
         default: ""
+      reset_password:
+        description: >-
+          SOLO para resetear la contraseña de un usuario que ya existe (se
+          la olvido). Dejar vacio en corridas normales. Si se completa, la
+          corrida NO revisa mails: pisa la contraseña por un codigo temporal
+          y lo obliga a elegir una nueva en el proximo login. Formato: un
+          "usuario:codigo" por linea, igual que provision_users.
+        required: false
+        default: ""
 
 concurrency:
   group: resumen-lab-update
@@ -61,4 +70,5 @@ jobs:
           BACKFILL_HOURS: ${{ github.event.inputs.backfill_hours }}
           PROVISION_USERS: ${{ github.event.inputs.provision_users }}
           BOCA_FORCE_UPDATE: ${{ github.event.inputs.boca_force_update }}
+          RESET_PASSWORD: ${{ github.event.inputs.reset_password }}
         run: python scripts/resumen_lab.py

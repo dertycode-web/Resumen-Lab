@@ -677,6 +677,23 @@ class SupabaseClient:
             prefer="resolution=merge-duplicates",
         )
 
+    def get_user_id_by_username(self, username):
+        result = self._request("GET", f"/rest/v1/profiles?username=eq.{urllib.parse.quote(username)}&select=id")
+        if not result:
+            return None
+        return result[0]["id"]
+
+    def reset_user_password(self, user_id, new_temp_password):
+        # PUT admin: pisa la contraseña actual (aunque el usuario no la
+        # recuerde ni la sepamos nosotros, no hace falta conocerla para
+        # resetearla). Ademas volvemos a poner must_change_password=true,
+        # asi la proxima vez que entre el login lo obliga a elegir una
+        # contraseña nueva de una, igual que en el alta original.
+        self._request("PUT", f"/auth/v1/admin/users/{user_id}", {"password": new_temp_password})
+        self._request(
+            "PATCH", f"/rest/v1/profiles?id=eq.{user_id}", {"must_change_password": True},
+        )
+
     def max_sent_at_ms(self):
         result = self._request("GET", "/rest/v1/mails?select=sent_at&order=sent_at.desc&limit=1")
         if result:
@@ -905,6 +922,40 @@ def run_provision_users(sb, mapping_text):
     log(f"[provision] Listo. OK: {ok}, con error: {failed}.")
 
 
+def run_reset_password(sb, mapping_text):
+    # Mismo formato que provision_users ("usuario:codigo_temporal"), pero
+    # para usuarios que YA existen y se olvidaron la contraseña. No hace
+    # falta (ni es posible) conocer la contraseña vieja: se pisa por una
+    # nueva temporal y se lo obliga a cambiarla en el proximo login.
+    lines = [ln.strip() for ln in re.split(r"[,;\n]+", mapping_text) if ln.strip()]
+    ok, failed = 0, 0
+    for line in lines:
+        if ":" not in line:
+            log(f"[reset] linea invalida (esperaba usuario:codigo): {line!r}")
+            failed += 1
+            continue
+        username, code = line.split(":", 1)
+        username = username.strip()
+        code = code.strip()
+        if not username or not code:
+            failed += 1
+            continue
+        print(f"::add-mask::{code}")
+        try:
+            user_id = sb.get_user_id_by_username(username)
+            if not user_id:
+                log(f"[reset] {username}: no existe ese usuario")
+                failed += 1
+                continue
+            sb.reset_user_password(user_id, code)
+            log(f"[reset] {username}: OK")
+            ok += 1
+        except Exception as e:
+            log(f"[reset] {username}: ERROR {type(e).__name__}: {e}")
+            failed += 1
+    log(f"[reset] Listo. OK: {ok}, con error: {failed}.")
+
+
 # ---------------------------------------------------------------------------
 # Fixture de equipos de futbol (widget del dashboard, solo para algunos
 # usuarios puntuales, cada uno con SU equipo). Se actualiza como mucho una
@@ -1058,6 +1109,15 @@ def main():
             sys.exit(0)
         sb = SupabaseClient(supabase_url, supabase_key)
         run_provision_users(sb, provision_users_raw)
+        return
+
+    reset_password_raw = os.environ.get("RESET_PASSWORD") or ""
+    if reset_password_raw.strip():
+        if not supabase_url or not supabase_key:
+            log("ERROR: faltan SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY para resetear contraseñas")
+            sys.exit(0)
+        sb = SupabaseClient(supabase_url, supabase_key)
+        run_reset_password(sb, reset_password_raw)
         return
 
     gmail_client_id = os.environ.get("GMAIL_OAUTH_CLIENT_ID")
