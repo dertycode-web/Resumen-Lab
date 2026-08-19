@@ -1049,16 +1049,27 @@
       curEl = null; nextEl = null; nextTabKey = null; dir = null; dx = 0;
     }
 
-    tabContentWrapEl.addEventListener("touchstart", function (e) {
-      if (e.touches.length !== 1) return;
-      startX = e.touches[0].clientX;
-      startY = e.touches[0].clientY;
-      decided = false;
-      dragging = false;
-      dx = 0;
-    }, { passive: true });
+    // Ademas del contenedor de tarjetas, escuchamos tambien sobre el panel
+    // de busqueda de "Resumen por lapso" y la franja de banners de estado:
+    // son elementos hermanos de tabContentWrap (no estan adentro), y en
+    // "Resumen por lapso" el panel de busqueda ocupa buena parte de la
+    // pantalla en mobile — si el dedo arranca ahi, antes no se detectaba
+    // nada y el swipe parecia no funcionar en esa pestaña.
+    var swipeSurfaces = [rangePanelEl, document.getElementById("statusBanners"), tabContentWrapEl].filter(Boolean);
 
-    tabContentWrapEl.addEventListener("touchmove", function (e) {
+    swipeSurfaces.forEach(function (surfaceEl) {
+      surfaceEl.addEventListener("touchstart", function (e) {
+        if (e.touches.length !== 1) return;
+        startX = e.touches[0].clientX;
+        startY = e.touches[0].clientY;
+        decided = false;
+        dragging = false;
+        dx = 0;
+      }, { passive: true });
+    });
+
+    swipeSurfaces.forEach(function (surfaceEl) {
+      surfaceEl.addEventListener("touchmove", function (e) {
       if (startX === null) return;
       var x = e.touches[0].clientX, y = e.touches[0].clientY;
       var ddx = x - startX, ddy = y - startY;
@@ -1110,18 +1121,23 @@
       var sign = dir === "next" ? 1 : -1;
       curEl.style.transform = "translateX(" + dx + "px)";
       nextEl.style.transform = "translateX(" + (dx + sign * wrapWidth) + "px)";
-    }, { passive: false });
+      }, { passive: false });
+    });
 
-    tabContentWrapEl.addEventListener("touchend", function () {
-      if (!dragging) { startX = null; return; }
-      var commit = Math.abs(dx) > wrapWidth * 0.3;
-      endDrag(commit);
-    }, { passive: true });
+    swipeSurfaces.forEach(function (surfaceEl) {
+      surfaceEl.addEventListener("touchend", function () {
+        if (!dragging) { startX = null; return; }
+        var commit = Math.abs(dx) > wrapWidth * 0.3;
+        endDrag(commit);
+      }, { passive: true });
+    });
 
-    tabContentWrapEl.addEventListener("touchcancel", function () {
-      if (!dragging) { startX = null; return; }
-      endDrag(false);
-    }, { passive: true });
+    swipeSurfaces.forEach(function (surfaceEl) {
+      surfaceEl.addEventListener("touchcancel", function () {
+        if (!dragging) { startX = null; return; }
+        endDrag(false);
+      }, { passive: true });
+    });
   })();
 
   var currentRange = null; // { fromMs, toMs, label, mailCount }
