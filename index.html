@@ -419,6 +419,18 @@
         var redness = clamp01((Math.min(r - g, r - b) - 8) / 45);
         var darkness = clamp01((90 - Math.max(r, g, b)) / 60);
         var alpha = Math.max(redness, darkness);
+        if (alpha > 0.02) {
+          // descontaminar color: el pixel de borde es una mezcla de fondo blanco +
+          // color real; recuperamos el color real despejando esa mezcla en vez de
+          // dejar el tono lavado/rosado que generaba el halo blanco.
+          var bg = 248;
+          r = clamp01(((r - (1 - alpha) * bg) / alpha) / 255) * 255;
+          g = clamp01(((g - (1 - alpha) * bg) / alpha) / 255) * 255;
+          b = clamp01(((b - (1 - alpha) * bg) / alpha) / 255) * 255;
+          px[i] = Math.round(r);
+          px[i + 1] = Math.round(g);
+          px[i + 2] = Math.round(b);
+        }
         px[i + 3] = Math.round(px[i + 3] * alpha);
       }
       ctx.putImageData(imgData, 0, 0);
