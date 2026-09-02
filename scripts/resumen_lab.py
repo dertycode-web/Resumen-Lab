@@ -623,6 +623,19 @@ class SupabaseClient:
                 return None
             return json.loads(raw)
 
+    def log_audit(self, action, detail=None, actor_username=None):
+        # Se inserta con la service_role key (no dispara el trigger de
+        # auth.uid(), por eso mandamos actor_username a mano). No debe
+        # frenar el script si la tabla todavia no existe / falla el insert.
+        try:
+            self._request(
+                "POST", "/rest/v1/audit_log",
+                {"action": action, "detail": detail, "actor_username": actor_username},
+                prefer="return=minimal",
+            )
+        except Exception as e:
+            log(f"[audit] no se pudo registrar '{action}': {type(e).__name__}: {e}")
+
     def upsert_mail(self, record_id, thrid, category, classification, own_ms):
         payload = {
             "id": record_id,
@@ -921,6 +934,7 @@ def run_provision_users(sb, mapping_text):
         try:
             user_id = sb.create_auth_user(email_addr, code, username)
             sb.upsert_profile(user_id, username)
+            sb.log_audit("provision", detail="alta de usuario", actor_username=username)
             log(f"[provision] {username}: OK")
             ok += 1
         except Exception as e:
@@ -955,6 +969,7 @@ def run_reset_password(sb, mapping_text):
                 failed += 1
                 continue
             sb.reset_user_password(user_id, code)
+            sb.log_audit("password_reset", detail="reset via workflow", actor_username=username)
             log(f"[reset] {username}: OK")
             ok += 1
         except Exception as e:

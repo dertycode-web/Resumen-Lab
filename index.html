@@ -755,10 +755,22 @@
   // no importa por cual de los dos formularios haya entrado, el resultado es
   // el mismo — cierra el hueco de "loguearse con el codigo temporal para
   // siempre sin nunca crear una contraseña propia".
+  function logAudit(action, detail) {
+    // Trazabilidad basica de accesos. Fire-and-forget: si falla, no bloquea
+    // el flujo normal de la app (la tabla puede no existir todavia si no se
+    // corrio schema-security.sql, por eso el catch silencioso).
+    fetch(SUPABASE_URL + "/rest/v1/audit_log", {
+      method: "POST",
+      headers: Object.assign({ "Content-Type": "application/json", Prefer: "return=minimal" }, authHeaders()),
+      body: JSON.stringify({ action: action, detail: detail || null })
+    }).catch(function () {});
+  }
+
   function afterSignIn(session) {
     currentAccessToken = session.access_token;
     var uid = session.user.id;
     var username = (session.user.user_metadata && session.user.user_metadata.username) || "";
+    logAudit("login");
     fetch(SUPABASE_URL + "/rest/v1/profiles?id=eq." + encodeURIComponent(uid) + "&select=must_change_password,username", {
       headers: authHeaders()
     }).then(function (r) { return r.json(); }).then(function (rows) {
@@ -778,6 +790,7 @@
   }
 
   var pendingUsername = "";
+  var pendingTempCode = "";
   var appBootstrapped = false;
 
   document.getElementById("loginBtn").addEventListener("click", function () {
@@ -804,6 +817,7 @@
         showAuthMsg("Usuario o código temporal incorrectos.");
         return;
       }
+      pendingTempCode = code;
       afterSignIn(res.data.session);
     });
   });
@@ -822,6 +836,8 @@
     var p2 = document.getElementById("newPass2").value;
     if (!p1 || !p2) { showAuthMsg("Completá los dos campos de contraseña."); return; }
     if (p1.length < 8) { showAuthMsg("La contraseña tiene que tener al menos 8 caracteres."); return; }
+    if (!/[a-zA-Z]/.test(p1) || !/[0-9]/.test(p1)) { showAuthMsg("La contraseña tiene que combinar letras y números."); return; }
+    if (pendingTempCode && p1 === pendingTempCode) { showAuthMsg("La contraseña nueva no puede ser igual al código temporal."); return; }
     if (p1 !== p2) { showAuthMsg("Las contraseñas no coinciden."); return; }
     showAuthMsg("Guardando…");
     sbAuth.auth.updateUser({ password: p1 }).then(function (res) {
@@ -836,11 +852,14 @@
     }).then(function () {
       document.getElementById("newPass1").value = "";
       document.getElementById("newPass2").value = "";
+      pendingTempCode = "";
+      logAudit("password_set");
       showApp(pendingUsername);
     });
   });
 
   logoutBtnEl.addEventListener("click", function () {
+    logAudit("logout");
     sbAuth.auth.signOut().then(function () {
       currentAccessToken = null;
       showLoginGate();
@@ -1538,7 +1557,11 @@
 
     var textSpan = document.createElement("span");
     textSpan.style.cssText = "flex:1;min-width:0;overflow-wrap:break-word;word-break:break-word;";
-    textSpan.innerHTML = check + "- " + (item.subject || "(sin asunto)") + age;
+    // El asunto viene de un mail real (no confiable): se inserta como texto
+    // plano, nunca como HTML, para evitar XSS via asunto con <script>/<img onerror>.
+    textSpan.innerHTML = check + "- ";
+    textSpan.appendChild(document.createTextNode(item.subject || "(sin asunto)"));
+    if (age) textSpan.insertAdjacentHTML("beforeend", age);
     mainLine.appendChild(textSpan);
 
     var copyBtn = document.createElement("button");
