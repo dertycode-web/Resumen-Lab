@@ -410,15 +410,16 @@
       try { imgData = ctx.getImageData(0, 0, canvas.width, canvas.height); }
       catch (e) { return; }
       var px = imgData.data;
+      function clamp01(v) { return v < 0 ? 0 : (v > 1 ? 1 : v); }
       for (var i = 0; i < px.length; i += 4) {
         var r = px[i], g = px[i + 1], b = px[i + 2];
-        // solo dejamos lo que es claramente rojo (el trazo del logo) u oscuro;
-        // todo lo demas (fondo blanco/gris y halos de compresion) se hace transparente
-        var isRed = (r - g) > 35 && (r - b) > 35 && r > 110;
-        var isDark = r < 60 && g < 60 && b < 60;
-        if (!isRed && !isDark) {
-          px[i + 3] = 0;
-        }
+        // "rojez" del pixel: cuanto mas se aleja del gris/blanco de fondo hacia el rojo,
+        // mas opaco queda. Esto conserva el antialiasing/suavizado original en vez de
+        // cortar el alpha de forma binaria (lo que dejaba bordes dentados).
+        var redness = clamp01((Math.min(r - g, r - b) - 8) / 45);
+        var darkness = clamp01((90 - Math.max(r, g, b)) / 60);
+        var alpha = Math.max(redness, darkness);
+        px[i + 3] = Math.round(px[i + 3] * alpha);
       }
       ctx.putImageData(imgData, 0, 0);
 
